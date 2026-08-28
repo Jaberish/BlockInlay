@@ -1,0 +1,18 @@
+export const theme = {
+  bg: '#15121F',
+  panel: '#1E1930',
+  panelEdge: 'rgba(255,255,255,0.07)',
+  panelEdgeHot: 'rgba(255,110,138,0.55)',
+  socket: 'rgba(255,255,255,0.05)',
+  socketEdge: 'rgba(255,255,255,0.10)',
+  ghost: 'rgba(255,255,255,0.13)',
+  preview: 'rgba(255,255,255,0.20)',
+  previewEdge: 'rgba(255,255,255,0.55)',
+  text: '#F5F2FF',
+  textDim: '#9C94BC',
+  accent: '#FF6E8A',
+  thumb: '#4A4270',
+  thumbShade: '#332D52',
+  thumbSolved: '#FF6E8A',
+  thumbSolvedShade: '#C93F5E',
+};
