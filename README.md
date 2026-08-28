@@ -1,16 +1,17 @@
 # Block Inlay
 
-A React Native (Expo) block puzzle. Twelve boards, each with a set of pieces that
-fills it — no piece left over, no square left empty, and exactly one way to do it.
+A React Native (Expo) block puzzle. A thousand boards, each with a set of pieces
+that fills it — no piece left over, no square left empty, and exactly one way to
+do it.
 
 ```
- ###      ##...##     ..#..     ###..     ...#...    .##.##.
-##..      #######     .###.     ###..     ..###..    #######
-##..      ..###..     #####     ###..     #######    .#####.
-##..      #######     .###.     #####     .#####.    ..###..
- ###      ##...##     #####     #####     ..###..    ...#...
-                      ..#..                .##.##.
-Crescent  Butterfly   Pine      Boot       Star       Heart      … and six more
+ ###      ##...##     .##.##.    .###.     ##...##    .####.
+##..      #######     #######    ##.##     #######    ######
+##..      ..###..     .#####.    ##.##     ##.#.##    ##..##
+##..      #######     ..###..    #####     #######    ##..##
+ ###      ##...##     ...#...    #####     .#####.    ######
+                                 #####     .##.##.    .####.
+Crescent  Butterfly   Heart      Padlock   Owl        Donut     … and 994 more
 ```
 
 ## Running it
@@ -47,19 +48,24 @@ undone.
 
 ## The levels
 
-Levels are ordered by how much backtracking they demand — measured, not guessed,
-by counting the dead ends a systematic solver hits.
+The first 50 boards are drawn by hand and meant to look like something — a heart,
+a cat, a key, an anchor. The other 950 are generated. Their silhouettes are
+abstract, but they are held to filters calibrated so that all 50 drawn boards
+clear them, so they read as deliberate shapes rather than blobs.
 
-| # | board | cells | pieces | # | board | cells | pieces |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Crescent (warm-up) | 12 | 3 | 7 | Ghost (medium) | 21 | 5 |
-| 2 | Butterfly (warm-up) | 25 | 5 | 8 | Cat (hard) | 24 | 6 |
-| 3 | Pine (easy) | 19 | 4 | 9 | Arrow (hard) | 22 | 5 |
-| 4 | Boot (easy) | 19 | 4 | 10 | Diamond (hard) | 24 | 6 |
-| 5 | Star (easy) | 23 | 5 | 11 | Crown (hard) | 27 | 6 |
-| 6 | Heart (medium) | 20 | 5 | 12 | Tower (expert) | 26 | 6 |
+Levels are ordered by a difficulty score: how many piece placements a solver has
+to try before it has proved the board has exactly one solution. It is measured,
+not guessed, and the labels are cut from it — so a level's difficulty follows from
+the puzzle rather than from where it sits in the list.
 
-Every one of them satisfies two properties, and neither is taken on trust:
+| | drawn | generated | all |
+| --- | --- | --- | --- |
+| boards | 50 | 950 | 1000 |
+| score | 3 – 240 | 18 – 690 | 3 – 690 |
+| cells | 12 – 35 | 18 – 46 | 12 – 46 |
+| pieces | 3 – 9 | 4 – 9 | 3 – 9 |
+
+Every one of them satisfies three properties, and none is taken on trust:
 
 ```bash
 npm run verify-levels
@@ -67,8 +73,12 @@ npm run verify-levels
 
 That exhaustively searches every legal placement of every piece on every board,
 and fails unless each one is covered exactly — same number of cells as the pieces
-supply — by precisely one arrangement. The rules of dropping and snapping have
-their own checks across all twelve boards:
+supply — by precisely one arrangement, with the difficulty score the data records
+matching the one the search actually produces. It is deliberately written as a
+plain, slow, `Set`-of-strings solver rather than sharing the generator's bitmask
+one: it is the independent check on the generator, so it does not share its code.
+The rules of dropping and snapping have their own checks, run against all 1000
+boards:
 
 ```bash
 npm test
@@ -76,30 +86,60 @@ npm test
 
 ## Layout
 
-Nothing outside `levels.ts` knows about any particular level: the board sizes,
+Nothing outside the level data knows about any particular level: the board sizes,
 piece counts, tray layout, menu thumbnails and level order are all derived.
 
 | file | what's in it |
 | --- | --- |
-| [src/levels.ts](src/levels.ts) | every level, drawn as `#` patterns |
+| [src/levels.ts](src/levels.ts) | types, difficulty bands, and assembling both packs |
+| [src/handmade.ts](src/handmade.ts) | the 50 drawn boards, as `#` patterns |
+| [src/generated.ts](src/generated.ts) | the 950 generated boards, one per line |
 | [src/placement.ts](src/placement.ts) | pure rules: what fits where, what a drop snaps to |
 | [src/progress.ts](src/progress.ts) | which boards are solved, saved on the device |
 | [src/MenuScreen.tsx](src/MenuScreen.tsx) | the level list, with each board drawn as its tile |
 | [src/GameScreen.tsx](src/GameScreen.tsx) | board, tray, and the drag gestures |
 | [src/SettingsScreen.tsx](src/SettingsScreen.tsx) | progress summary and resetting it |
 | [src/Blocks.tsx](src/Blocks.tsx) | how a group of squares is drawn |
+| [scripts/generate-levels.mjs](scripts/generate-levels.mjs) | writes the generated pack |
 | [scripts/verify-levels.mjs](scripts/verify-levels.mjs) | proves every level has one perfect solution |
 | [scripts/test-placement.mjs](scripts/test-placement.mjs) | checks the drop/snap rules |
 
-## Adding a level
+## Adding a drawn board
 
-Add an entry to `DEFS` in [src/levels.ts](src/levels.ts) — a name, a difficulty,
-the board drawn with `#`, and the pieces drawn the same way. Then run
-`npm run verify-levels` and adjust the pieces until it reports exactly one
-solution. Nothing else needs to change: the menu, the board and the tray all size
+Add an entry to `HANDMADE` in [src/handmade.ts](src/handmade.ts) — a name, the
+board drawn with `#`, the pieces drawn the same way, and the difficulty score.
+Then run `npm run verify-levels`, which will tell you the real score if the one
+you guessed is wrong, and adjust the pieces until it reports one solution.
+Nothing else needs to change: the menu, the board and the tray all size
 themselves from the data.
 
 Two things worth knowing when inventing a board. Narrow necks and single-cell tips
 make a board *easier*, because they force placements; wide open areas make it
 harder, because pieces can slide. And shapes that are one cell wide in a loop or
 stem — a key, a letter "A" — cannot be cut into 4- and 5-cell pieces at all.
+
+Finding a cut by hand is tedious, so the generator's solver will do it: it can
+search thousands of ways to carve a board and keep the ones with a single
+solution. That is how the drawn boards got their pieces — the silhouettes are
+hand-drawn, the cuts are not.
+
+## Regenerating the pack
+
+```bash
+npm run generate-levels
+```
+
+That rewrites [src/generated.ts](src/generated.ts) from scratch. It is
+deterministic — the same seed gives the same 1000 levels — but changing the seed
+or the parameters renames every generated level, which throws away saved progress
+on boards that no longer exist under the same name.
+
+It works by growing a large pool of candidates and then choosing the pack from it.
+Boards come from a dozen silhouette families rather than pure noise; pieces are
+cut by randomised partitioning and kept only when the cut happens to be uniquely
+solvable *and* demands real search, since a level whose every step is forced is a
+fitting exercise rather than a puzzle. Left alone, random cuts pile up at the easy
+end — two thirds of everything the generator finds needs under 40 placements — so
+the pack is chosen against a geometric ramp of target difficulties rather than
+skimmed off the pool, with no silhouette used twice and no family allowed to run
+away with the list.

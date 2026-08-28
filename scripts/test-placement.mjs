@@ -2,7 +2,9 @@
  * Rules of the game, checked without a screen:
  *   npm test
  */
-import { LEVELS, cellKey, levelById } from '../src/levels.ts';
+import { LEVELS, cellKey, levelById, sectionOf } from '../src/levels.ts';
+import { buildMenu, heightOf } from '../src/menuLayout.ts';
+import { boardCell, trayLayout, CHROME, ROOT_PADDING } from '../src/gameLayout.ts';
 import { emptyBoard, fitsAt, isSolved, occupiedExcept, snapToBoard } from '../src/placement.ts';
 
 let failures = 0;
@@ -100,6 +102,124 @@ for (const level of LEVELS) {
 }
 
 check('a fresh board is not solved', LEVELS.every((l) => !isSolved(l, emptyBoard(l))));
+
+// ---- the level list -------------------------------------------------------
+// The menu places 1000 tiles by arithmetic rather than by measuring them, so a
+// wrong offset here does not throw — it silently scrolls to blank space.
+
+for (const columns of [2, 3]) {
+  const { items, itemOfLevel, offsets, height } = buildMenu(columns);
+
+  const listed = items.filter((i) => i.kind === 'row').flatMap((i) => i.levels);
+  check(
+    `${columns} columns: every level appears exactly once, in order`,
+    listed.length === LEVELS.length && listed.every((level, i) => level.index === i),
+  );
+
+  check(
+    `${columns} columns: no row holds more tiles than there are columns`,
+    items.every((item) => item.kind === 'section' || item.levels.length <= columns),
+  );
+
+  check(
+    `${columns} columns: each section heading is announced once, before its levels`,
+    items.filter((i) => i.kind === 'section').length === new Set(LEVELS.map(sectionOf)).size &&
+      items.every((item, i) =>
+        item.kind === 'section' ||
+        item.levels.every((level) => {
+          for (let j = i; j >= 0; j--) if (items[j].kind === 'section') return items[j].label === sectionOf(level);
+          return false;
+        }),
+      ),
+  );
+
+  check(
+    `${columns} columns: section counts match how many levels follow them`,
+    items.every((item, i) => {
+      if (item.kind !== 'section') return true;
+      let n = 0;
+      for (let j = i + 1; j < items.length && items[j].kind === 'row'; j++) n += items[j].levels.length;
+      return n === item.count;
+    }),
+  );
+
+  let running = 0;
+  check(
+    `${columns} columns: offsets are the running height of everything above`,
+    items.every((item, i) => {
+      const ok = offsets[i] === running;
+      running += heightOf(item);
+      return ok;
+    }) && running === height,
+  );
+
+  check(
+    `${columns} columns: jumping to a level lands on the item that holds it`,
+    LEVELS.every((level) => {
+      const item = items[itemOfLevel[level.index]];
+      return item.kind === 'row' && item.levels.includes(level);
+    }),
+  );
+}
+
+// ---- fitting a level on a screen ------------------------------------------
+// Boards run from 12 to 46 cells and 4 to 10 columns wide, with up to 9 pieces
+// in the tray. Every one of them has to fit on the smallest phone we care about
+// without the board running off the edge or the tray eating the screen.
+
+const SCREENS = [
+  { name: 'small phone', width: 320, height: 568, insets: { top: 20, bottom: 0 } },
+  { name: 'phone', width: 390, height: 844, insets: { top: 47, bottom: 34 } },
+  { name: 'large phone', width: 430, height: 932, insets: { top: 59, bottom: 34 } },
+  { name: 'tablet', width: 820, height: 1180, insets: { top: 24, bottom: 20 } },
+  { name: 'landscape phone', width: 844, height: 390, insets: { top: 0, bottom: 21 } },
+];
+
+for (const screen of SCREENS) {
+  const { width, height, insets } = screen;
+  let tooWide = null;
+  let tooTall = null;
+  let smallestCell = Infinity;
+  let deepestTray = 0;
+
+  for (const level of LEVELS) {
+    const tray = trayLayout(level, width, height);
+    const cell = boardCell(level, width, height, insets, tray);
+    const boardWidth = level.board.cols * cell;
+    const boardHeight = level.board.rows * cell;
+    const across = width - ROOT_PADDING * 2;
+    const down = height - insets.top - insets.bottom - CHROME - tray.height;
+
+    if (boardWidth > across) tooWide ??= `${level.name} wants ${boardWidth}px of ${across}px`;
+    // 18px is the floor the sizing refuses to go below, so a board can overflow
+    // there by design rather than by accident
+    if (boardHeight > Math.max(down, 0) && cell > 18) {
+      tooTall ??= `${level.name} wants ${boardHeight}px of ${Math.round(down)}px`;
+    }
+    smallestCell = Math.min(smallestCell, cell);
+    deepestTray = Math.max(deepestTray, tray.height);
+  }
+
+  check(`${screen.name}: every board fits across the screen`, tooWide === null, tooWide ?? '');
+  check(`${screen.name}: every board fits in the space the tray leaves`, tooTall === null, tooTall ?? '');
+  check(`${screen.name}: board squares stay big enough to aim at`, smallestCell >= 18, `${smallestCell}px`);
+  check(
+    `${screen.name}: the tray never takes more than a third of the screen`,
+    deepestTray <= height * 0.34,
+    `${deepestTray}px of ${height}px`,
+  );
+}
+
+// the tray shrinks pieces rather than dropping them, so every piece needs a slot
+const cramped = LEVELS.find((level) => {
+  const tray = trayLayout(level, 320, 568);
+  return tray.cell < 11 || tray.rows > 3;
+});
+check(
+  'every level packs its pieces into the tray on a small phone',
+  cramped === undefined,
+  cramped ? `${cramped.name} with ${cramped.pieces.length} pieces` : '',
+);
 
 console.log(failures === 0 ? '\nall checks passed' : `\n${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

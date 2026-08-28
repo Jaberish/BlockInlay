@@ -15,6 +15,14 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Blocks from './Blocks';
 import { cellKey, type Cell, type Level, type Piece } from './levels';
+import {
+  boardCell,
+  trayLayout,
+  ROOT_PADDING,
+  SLOT_MARGIN_X,
+  SLOT_MARGIN_Y,
+  TRAY_PADDING,
+} from './gameLayout';
 import { emptyBoard, isSolved, snapToBoard, type Placements } from './placement';
 import { theme } from './theme';
 
@@ -27,12 +35,6 @@ const LIFT_CELLS = Platform.OS === 'web' ? 0 : 0.9;
 const TAP_SLOP = 6;
 const TAP_MS = 350;
 
-const ROOT_PADDING = 18;
-const TRAY_PADDING = 8;
-const SLOT_MARGIN_X = 8;
-const SLOT_MARGIN_Y = 6;
-/** header + tray chrome + paddings that the board has to share the screen with */
-const CHROME = 128;
 
 type Props = {
   level: Level;
@@ -49,45 +51,13 @@ export default function GameScreen({ level, onBack, onSolved, onNext }: Props) {
   const [dragId, setDragId] = useState<string | null>(null);
   const [preview, setPreview] = useState<Cell | null>(null);
 
-  /**
-   * Tray first: pick the largest square size that still wraps every piece of
-   * this level into at most three rows. Levels differ in piece count and piece
-   * height, so this is measured rather than assumed.
-   */
-  const tray = useMemo(() => {
-    const maxWidth = width - ROOT_PADDING * 2 - TRAY_PADDING * 2;
-    const maxHeight = Math.max(104, height * 0.28);
-    const pack = (size: number) => {
-      let rowWidth = 0;
-      let rowHeight = 0;
-      let total = 0;
-      let rows = 1;
-      for (const piece of level.pieces) {
-        const w = piece.cols * size + SLOT_MARGIN_X * 2;
-        const h = piece.rows * size + SLOT_MARGIN_Y * 2;
-        if (rowWidth + w > maxWidth && rowWidth > 0) {
-          rows++;
-          total += rowHeight;
-          rowWidth = 0;
-          rowHeight = 0;
-        }
-        rowWidth += w;
-        rowHeight = Math.max(rowHeight, h);
-      }
-      return { rows, height: total + rowHeight };
-    };
-    for (let size = 30; size > 11; size--) {
-      const fit = pack(size);
-      if (fit.rows <= 3 && fit.height <= maxHeight) return { cell: size, ...fit };
-    }
-    return { cell: 11, ...pack(11) };
-  }, [height, level, width]);
+  const tray = useMemo(() => trayLayout(level, width, height), [height, level, width]);
 
-  const cell = useMemo(() => {
-    const byWidth = (width - ROOT_PADDING * 2 - 8) / level.board.cols;
-    const spare = height - insets.top - insets.bottom - CHROME - tray.height;
-    return Math.max(18, Math.min(64, Math.floor(Math.min(byWidth, spare / level.board.rows))));
-  }, [height, insets.bottom, insets.top, level, tray.height, width]);
+  const cell = useMemo(
+    () => boardCell(level, width, height, insets, tray),
+    // insets is a fresh object on some renders, so depend on the numbers
+    [height, insets.bottom, insets.top, level, tray, width],
+  );
 
   // gesture callbacks run outside the render cycle, so they read through refs
   const levelRef = useRef(level);

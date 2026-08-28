@@ -23,7 +23,8 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "test": "node --no-warnings --import ./scripts/register-ts.mjs scripts/test-placement.mjs",
-    "verify-levels": "node --no-warnings --import ./scripts/register-ts.mjs scripts/verify-levels.mjs"
+    "verify-levels": "node --no-warnings --import ./scripts/register-ts.mjs scripts/verify-levels.mjs",
+    "generate-levels": "node scripts/generate-levels.mjs --count 950 --pool 80 --ramp-floor 18 --exclude scripts/drawn-silhouettes.json --out src/generated.ts"
   },
   "private": true
 }
