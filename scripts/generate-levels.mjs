@@ -158,7 +158,7 @@ const bloom = (rng) => {
 const kite = (rng) => {
   const up = int(rng, 1, 5);
   const down = int(rng, 1, 5);
-  const waist = int(rng, 0, 2);
+  const waist = int(rng, 0, 4);
   const step = pick(rng, [1, 1, 2]);
   const widths = [];
   for (let i = 0; i < up; i++) widths.push(1 + 2 * i * step);
@@ -171,8 +171,8 @@ const kite = (rng) => {
 /** a tapering top over a stem — trees, towers, chess pieces */
 const spire = (rng) => {
   const tiers = int(rng, 2, 5);
-  const stem = int(rng, 1, 4);
-  const stemW = pick(rng, [1, 1, 3]);
+  const stem = int(rng, 1, 5);
+  const stemW = pick(rng, [1, 1, 3, 5]);
   const widths = [];
   for (let i = 0; i < tiers; i++) {
     const w = Math.min(9, 1 + 2 * i);
@@ -186,7 +186,7 @@ const spire = (rng) => {
 /** solid body with a doorway cut out of the bottom */
 const vault = (rng) => {
   const cols = int(rng, 5, 9) | 1;
-  const rows = int(rng, 4, 7);
+  const rows = int(rng, 4, 9);
   const g = grid(rows, cols);
   for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) g[r][c] = 1;
   const doorW = pick(rng, [1, 3]);
@@ -207,8 +207,8 @@ const vault = (rng) => {
 
 /** a hollow ring */
 const lantern = (rng) => {
-  const rows = int(rng, 4, 8);
-  const cols = int(rng, 4, 8);
+  const rows = int(rng, 4, 9);
+  const cols = int(rng, 4, 9);
   const g = grid(rows, cols);
   for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) g[r][c] = 1;
   const holeR = int(rng, 1, rows - 3);
@@ -293,8 +293,8 @@ const totem = (rng) => {
 
 /** two arms meeting at a point — chevrons, wings, bows */
 const crest = (rng) => {
-  const rows = int(rng, 3, 7);
-  const thick = int(rng, 1, 2);
+  const rows = int(rng, 3, 8);
+  const thick = int(rng, 1, 3);
   const halfCols = rows + thick - 1;
   const half = grid(rows, halfCols);
   for (let r = 0; r < rows; r++)
@@ -313,9 +313,9 @@ const anvil = (rng) => {
   const topW = int(rng, 2, 4) * 2 + 1;
   const waistW = pick(rng, [1, 3]);
   const bottomW = int(rng, 2, 4) * 2 + 1;
-  const topH = int(rng, 1, 3);
-  const waistH = int(rng, 1, 2);
-  const bottomH = int(rng, 1, 3);
+  const topH = int(rng, 1, 4);
+  const waistH = int(rng, 1, 3);
+  const bottomH = int(rng, 1, 4);
   const widths = [];
   for (let i = 0; i < topH; i++) widths.push(topW);
   for (let i = 0; i < waistH; i++) widths.push(waistW);
@@ -347,9 +347,9 @@ const bracket = (rng) => {
 
 /** stepped shapes — staircases and terraces */
 const ridge = (rng) => {
-  const steps = int(rng, 3, 6);
-  const stepW = int(rng, 1, 2);
-  const stepH = int(rng, 1, 2);
+  const steps = int(rng, 3, 7);
+  const stepW = int(rng, 1, 3);
+  const stepH = int(rng, 1, 3);
   const rows = steps * stepH;
   const cols = steps * stepW;
   const g = grid(rows, cols);
@@ -491,9 +491,37 @@ const boardOk = (g) => {
   return true;
 };
 
+/**
+ * Shave a few cells off a family's output, mirrored so the shape stays
+ * deliberate. The narrow families (kites, spires, vaults) have only a few dozen
+ * parameter combinations between them; this is what lets them keep contributing
+ * once a pack wants thousands of distinct silhouettes rather than hundreds. The
+ * board filters still get the last word, so anything this turns into noise is
+ * thrown out anyway.
+ */
+const notch = (g, rng) => {
+  if (rng() < 0.4) return g;
+  const rows = g.length;
+  const cols = g[0].length;
+  const bites = int(rng, 1, 3);
+  for (let i = 0; i < bites; i++) {
+    const r = int(rng, 0, rows - 1);
+    const c = int(rng, 0, Math.floor((cols - 1) / 2));
+    const mirror = cols - 1 - c;
+    if (!g[r][c] || !g[r][mirror]) continue;
+    g[r][c] = 0;
+    g[r][mirror] = 0;
+    if (!isConnected(g)) {
+      g[r][c] = 1;
+      g[r][mirror] = 1;
+    }
+  }
+  return g;
+};
+
 const makeBoard = (rng) => {
   const family = pick(rng, FAMILY_BAG);
-  const raw = family.build(rng);
+  const raw = notch(family.build(rng), rng);
   const g = trim(raw);
   if (!g || !boardOk(g)) return null;
   return { family: family.name, pattern: pattern(g) };
@@ -872,16 +900,11 @@ const elapsed = ((Date.now() - started) / 1000).toFixed(1);
 
 const familyCounts = new Map();
 levels.forEach((level) => familyCounts.set(level.family, (familyCounts.get(level.family) ?? 0) + 1));
-levels.forEach((level) => {
-  const n = (level.seq = (familyCounts.seq ??= new Map()).get(level.family) ?? 0) + 1;
-  familyCounts.seq.set(level.family, n);
-  level.name = `${level.family} ${n}`;
-});
 
 console.log(`pool ${pool.length} candidates -> pack of ${levels.length}/${count} in ${elapsed}s`);
 console.log(`  board attempts ${stats.boardTries}, cut attempts ${stats.cutTries}`);
 console.log(`  rejected: ${stats.notUnique} not unique, ${stats.tooForced} too forced, ${stats.capped} over node cap`);
-console.log(`  families: ${[...familyCounts].filter(([k]) => typeof k === 'string').sort((a, b) => b[1] - a[1]).map(([f, n]) => `${f} ${n}`).join(', ')}`);
+console.log(`  families: ${[...familyCounts].sort((a, b) => b[1] - a[1]).map(([f, n]) => `${f} ${n}`).join(', ')}`);
 console.log(`  distinct silhouettes: ${new Set(levels.map((l) => l.silhouette)).size}`);
 
 const stat = (xs) => {
@@ -896,7 +919,7 @@ if (preview) {
   const step = Math.max(1, Math.floor(levels.length / 24));
   for (let i = 0; i < levels.length; i += step) {
     const l = levels[i];
-    console.log(`\n#${i + 1} ${l.name} — ${l.cells} cells, ${l.pieces.length} pieces, ${l.nodes} nodes`);
+    console.log(`\n#${i + 1} ${l.family} — ${l.cells} cells, ${l.pieces.length} pieces, ${l.nodes} nodes`);
     console.log(l.board.map((row) => '   ' + row.replace(/#/g, '\u2588').replace(/\./g, '\u00b7')).join('\n'));
     console.log('   pieces: ' + l.pieces.map((p) => p.join(' ')).join('   '));
   }
@@ -904,7 +927,7 @@ if (preview) {
 
 if (out) {
   const lines = levels.map(
-    (l) => `${l.name}|${l.nodes}|${l.board.join('/')}|${l.pieces.map((p) => p.join('/')).join(';')}`,
+    (l) => `${l.nodes}|${l.board.join('/')}|${l.pieces.map((p) => p.join('/')).join(';')}`,
   );
   const file = out.endsWith('.ts')
     ? `/**
@@ -914,7 +937,7 @@ if (out) {
  * come from a dozen shape families (see the generator) and are filtered against
  * thresholds calibrated so every hand-drawn board in handmade.ts clears them.
  *
- * One level per line:  name | difficulty score | board rows | piece shapes
+ * One level per line:  difficulty score | board rows | piece shapes
  * Rows are separated by /, pieces by ;. The score is how many placements a
  * solver has to try to prove the board has a single solution; levels are in
  * ascending order of it.

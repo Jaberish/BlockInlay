@@ -24,7 +24,10 @@ import {
   TRAY_PADDING,
 } from './gameLayout';
 import { emptyBoard, isSolved, snapToBoard, type Placements } from './placement';
+import { nextHint } from './solve';
+import HintButton from './HintButton';
 import { theme } from './theme';
+import { useAudioPlayer } from 'expo-audio';
 
 type Point = { x: number; y: number };
 type Source = 'tray' | 'board';
@@ -35,21 +38,46 @@ const LIFT_CELLS = Platform.OS === 'web' ? 0 : 0.9;
 const TAP_SLOP = 6;
 const TAP_MS = 350;
 
+/** the flash over a piece a hint just placed: two pulses, then out */
+const FLASH_STEPS = [0.55, 0.12, 0.5, 0];
+const FLASH_MS = 210;
+
 
 type Props = {
   level: Level;
   onBack: () => void;
   onSolved?: (levelId: string) => void;
   onNext?: () => void;
+  /** the hint bank, owned by the app so it survives leaving the level */
+  hints: number;
+  hintProgress: number;
+  onUseHint: () => boolean;
+  soundOn: boolean;
+  /** pull the music down so the finish chime can be heard over it */
+  onDuckMusic: () => void;
 };
 
-export default function GameScreen({ level, onBack, onSolved, onNext }: Props) {
+export default function GameScreen({
+  level,
+  onBack,
+  onSolved,
+  onNext,
+  hints,
+  hintProgress,
+  onUseHint,
+  soundOn,
+  onDuckMusic,
+}: Props) {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
 
   const [placements, setPlacements] = useState<Placements>(() => emptyBoard(level));
   const [dragId, setDragId] = useState<string | null>(null);
   const [preview, setPreview] = useState<Cell | null>(null);
+  /** the piece a hint just revealed, flashed briefly so it is obvious what changed */
+  const [flash, setFlash] = useState<{ pieceId: string; step: number } | null>(null);
+  /** shown when the hint button is tapped with an empty bank */
+  const [hintNote, setHintNote] = useState<string | null>(null);
 
   const tray = useMemo(() => trayLayout(level, width, height), [height, level, width]);
 
@@ -260,6 +288,62 @@ export default function GameScreen({ level, onBack, onSolved, onNext }: Props) {
     if (solved) onSolved?.(level.id);
   }, [level.id, onSolved, solved]);
 
+  const chime = useAudioPlayer(require('../assets/complete.wav'));
+  const chimed = useRef(false);
+  useEffect(() => {
+    if (!solved) {
+      chimed.current = false;
+      return;
+    }
+    // the effect re-runs on unrelated renders while the board stays solved, so
+    // latch it: the chime belongs to finishing, not to being finished
+    if (chimed.current || !soundOn) return;
+    chimed.current = true;
+    onDuckMusic();
+    try {
+      chime.seekTo(0);
+      chime.play();
+    } catch {
+      // audio is a garnish; never let it break finishing a level
+    }
+  }, [chime, onDuckMusic, solved, soundOn]);
+
+  /**
+   * Reveal one piece in its true home. Anything sitting on those squares goes
+   * back to the tray — a hint has to be able to correct a wrong guess, or it
+   * would be useless exactly when it is most needed.
+   */
+  const takeHint = useCallback(() => {
+    const current = levelRef.current;
+    const hint = nextHint(current, placementsRef.current);
+    if (!hint) return;
+    if (!onUseHint()) {
+      // the bank is empty, so say when it refills rather than doing nothing
+      const minutes = Math.max(1, Math.ceil((1 - hintProgress) * 60));
+      setHintNote(minutes === 1 ? 'Next hint in a minute' : `Next hint in ${minutes} minutes`);
+      return;
+    }
+    const piece = current.pieces.find((p) => p.id === hint.pieceId);
+    if (!piece) return;
+    setFlash({ pieceId: piece.id, step: 0 });
+    const claimed = new Set(
+      piece.cells.map((c) => cellKey(hint.at.row + c.row, hint.at.col + c.col)),
+    );
+    setPlacements((placed) => {
+      const next = { ...placed };
+      for (const other of current.pieces) {
+        if (other.id === piece.id) continue;
+        const spot = next[other.id];
+        if (!spot) continue;
+        if (other.cells.some((c) => claimed.has(cellKey(spot.row + c.row, spot.col + c.col)))) {
+          next[other.id] = null;
+        }
+      }
+      next[piece.id] = hint.at;
+      return next;
+    });
+  }, [hintProgress, onUseHint]);
+
   const celebrate = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.timing(celebrate, {
@@ -268,6 +352,59 @@ export default function GameScreen({ level, onBack, onSolved, onNext }: Props) {
       useNativeDriver: true,
     }).start();
   }, [celebrate, solved]);
+
+  /**
+   * "Perfect fit" lands a beat after the tray has swapped out, then springs past
+   * its size and settles — so finishing reads as an arrival rather than a label
+   * that was already there.
+   */
+  const titlePop = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!solved) {
+      titlePop.setValue(0);
+      return;
+    }
+    Animated.sequence([
+      Animated.delay(110),
+      Animated.spring(titlePop, {
+        toValue: 1,
+        friction: 5,
+        tension: 90,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [solved, titlePop]);
+
+  /**
+   * Two quick pulses of white over the piece a hint just placed.
+   *
+   * Stepped through state rather than animated: there are four values and they
+   * are meant to be abrupt, so a fade would only soften the one thing the flash
+   * exists to do — say "this square is the new one".
+   */
+  useEffect(() => {
+    if (!flash) return;
+    const last = flash.step >= FLASH_STEPS.length - 1;
+    const timer = setTimeout(
+      () => (last ? setFlash(null) : setFlash({ pieceId: flash.pieceId, step: flash.step + 1 })),
+      FLASH_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [flash]);
+
+  const noteFade = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!hintNote) return;
+    const show = Animated.sequence([
+      Animated.timing(noteFade, { toValue: 1, duration: 160, useNativeDriver: true }),
+      Animated.delay(2600),
+      Animated.timing(noteFade, { toValue: 0, duration: 260, useNativeDriver: true }),
+    ]);
+    show.start(({ finished }) => {
+      if (finished) setHintNote(null);
+    });
+    return () => show.stop();
+  }, [hintNote, noteFade]);
 
   const gap = Math.max(1, Math.round(cell * 0.05));
   const radius = Math.max(2, Math.round(cell * 0.2));
@@ -291,10 +428,16 @@ export default function GameScreen({ level, onBack, onSolved, onNext }: Props) {
         </Pressable>
         <View style={styles.headerText}>
           <Text style={styles.title} numberOfLines={1}>
-            {level.index + 1}. {level.name}
+            {level.name ? `${level.index + 1}. ${level.name}` : `Level ${level.index + 1}`}
           </Text>
           <Text style={styles.subtitle}>{solved ? 'Solved — a perfect fit.' : level.difficulty}</Text>
         </View>
+        <HintButton
+          hints={hints}
+          progress={hintProgress}
+          disabled={solved}
+          onPress={takeHint}
+        />
         <Pressable
           onPress={reset}
           hitSlop={12}
@@ -302,9 +445,15 @@ export default function GameScreen({ level, onBack, onSolved, onNext }: Props) {
           accessibilityLabel="Reset the level"
           style={({ pressed }) => [styles.reset, pressed && styles.pressed]}
         >
-          <Text style={styles.resetText}>Reset</Text>
+          <Text style={styles.resetIcon}>↻</Text>
         </Pressable>
       </View>
+
+      {hintNote ? (
+        <Animated.View style={[styles.hintNote, { opacity: noteFade }]} pointerEvents="none">
+          <Text style={styles.hintNoteText}>{hintNote}</Text>
+        </Animated.View>
+      ) : null}
 
       <View style={styles.boardArea}>
         <View
@@ -365,6 +514,14 @@ export default function GameScreen({ level, onBack, onSolved, onNext }: Props) {
                 }}
               >
                 <Blocks shape={piece} cell={cell} handlers={responderFor(piece, 'board').panHandlers} />
+                {flash?.pieceId === piece.id ? (
+                  <View style={[styles.hintFlash, { opacity: FLASH_STEPS[flash.step] }]}>
+                    <Blocks
+                      shape={{ cells: piece.cells, color: '#FFFFFF', shade: '#FFFFFF' }}
+                      cell={cell}
+                    />
+                  </View>
+                ) : null}
               </View>
             );
           })}
@@ -384,24 +541,38 @@ export default function GameScreen({ level, onBack, onSolved, onNext }: Props) {
               },
             ]}
           >
-            <Text style={styles.bannerTitle}>Perfect fit</Text>
-            <Text style={styles.bannerText}>
-              {level.pieces.length} pieces in, not a square left over.
-            </Text>
-            <View style={styles.bannerButtons}>
-              <Pressable onPress={reset} style={({ pressed }) => [styles.ghostButton, pressed && styles.pressed]}>
-                <Text style={styles.ghostButtonText}>Play again</Text>
-              </Pressable>
-              {onNext ? (
-                <Pressable onPress={onNext} style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}>
-                  <Text style={styles.primaryButtonText}>Next level</Text>
-                </Pressable>
-              ) : (
-                <Pressable onPress={onBack} style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}>
-                  <Text style={styles.primaryButtonText}>All levels</Text>
-                </Pressable>
-              )}
-            </View>
+            <Animated.Text
+              style={[
+                styles.bannerTitle,
+                {
+                  opacity: titlePop.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0, 1],
+                    extrapolate: 'clamp',
+                  }),
+                  transform: [
+                    { scale: titlePop.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] }) },
+                    {
+                      translateY: titlePop.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [10, 0],
+                        extrapolate: 'clamp',
+                      }),
+                    },
+                  ],
+                },
+              ]}
+            >
+              Perfect fit
+            </Animated.Text>
+            <Pressable
+              onPress={onNext ?? onBack}
+              accessibilityRole="button"
+              accessibilityLabel={onNext ? 'Continue to the next level' : 'Back to the level list'}
+              style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}
+            >
+              <Text style={styles.primaryButtonText}>{onNext ? 'Continue' : 'All levels'}</Text>
+            </Pressable>
           </Animated.View>
         ) : (
           <View style={styles.trayRow}>
@@ -493,17 +664,22 @@ const styles = StyleSheet.create({
     opacity: 0.65,
   },
   reset: {
-    paddingHorizontal: 15,
-    paddingVertical: 9,
-    borderRadius: 999,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    // set apart from the hint clock, so neither gets pressed by mistake
+    marginLeft: 8,
     backgroundColor: theme.panel,
     borderWidth: 1,
     borderColor: theme.panelEdge,
   },
-  resetText: {
+  resetIcon: {
     color: theme.text,
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 20,
+    lineHeight: 24,
+    fontWeight: '700',
   },
   boardArea: {
     flex: 1,
@@ -546,47 +722,54 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  hintFlash: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+    pointerEvents: 'none',
+  },
+  hintNote: {
+    position: 'absolute',
+    top: 54,
+    right: ROOT_PADDING,
+    zIndex: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: theme.panel,
+    borderWidth: 1.5,
+    borderColor: theme.panelEdgeHot,
+  },
+  hintNoteText: {
+    color: theme.accent,
+    fontSize: 13,
+    fontWeight: '700',
+  },
   banner: {
+    alignSelf: 'stretch',
     alignItems: 'center',
     paddingVertical: 4,
   },
   bannerTitle: {
     color: theme.accent,
-    fontSize: 22,
+    fontSize: 26,
     fontWeight: '800',
-  },
-  bannerText: {
-    color: theme.textDim,
-    fontSize: 14,
-    marginTop: 4,
-  },
-  bannerButtons: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 14,
-  },
-  ghostButton: {
-    paddingHorizontal: 18,
-    paddingVertical: 11,
-    borderRadius: 999,
-    backgroundColor: theme.panel,
-    borderWidth: 1,
-    borderColor: theme.panelEdge,
-  },
-  ghostButtonText: {
-    color: theme.text,
-    fontSize: 15,
-    fontWeight: '700',
+    letterSpacing: 0.3,
   },
   primaryButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 11,
-    borderRadius: 999,
+    alignSelf: 'stretch',
+    marginTop: 16,
+    paddingVertical: 20,
+    borderRadius: 18,
     backgroundColor: theme.accent,
+    alignItems: 'center',
   },
   primaryButtonText: {
     color: '#2A0A14',
-    fontSize: 15,
+    fontSize: 19,
     fontWeight: '800',
+    letterSpacing: 0.2,
   },
 });

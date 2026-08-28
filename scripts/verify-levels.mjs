@@ -12,7 +12,7 @@
  *
  * Run with:  npm run verify-levels
  */
-import { LEVELS, cellKey, pieceCellCount, difficultyOf } from '../src/levels.ts';
+import { LEVEL_COUNT, getLevel, cellKey, pieceCellCount, difficultyOf } from '../src/levels.ts';
 
 /** pieces that look identical are interchangeable, so count board states, not permutations */
 const signature = (piece) => piece.cells.map((c) => cellKey(c.row, c.col)).join('|');
@@ -71,41 +71,46 @@ const solve = (level, limit = 2) => {
   return { tilings, nodes };
 };
 
+/** drawn boards have names; generated ones are known by their number */
+const label = (level) => level.name ?? `Level ${level.index + 1}`;
+
 const started = Date.now();
 const failures = [];
 const tally = new Map();
 const ids = new Set();
 const silhouettes = new Map();
 
-for (const level of LEVELS) {
+for (let index = 0; index < LEVEL_COUNT; index++) {
+  const level = getLevel(index);
   const cells = level.board.cells.length;
   const covered = pieceCellCount(level);
   const { tilings, nodes } = solve(level);
 
-  if (covered !== cells) failures.push(`${level.name}: pieces cover ${covered} of ${cells} cells`);
-  else if (tilings !== 1) failures.push(`${level.name}: ${tilings === 0 ? 'no solution' : 'more than one solution'}`);
-  else if (nodes !== level.nodes) failures.push(`${level.name}: recorded score ${level.nodes}, search says ${nodes}`);
-  else if (level.difficulty !== difficultyOf(level.nodes)) failures.push(`${level.name}: label does not match score`);
+  if (covered !== cells) failures.push(`${label(level)}: pieces cover ${covered} of ${cells} cells`);
+  else if (tilings !== 1) failures.push(`${label(level)}: ${tilings === 0 ? 'no solution' : 'more than one solution'}`);
+  else if (nodes !== level.nodes) failures.push(`${label(level)}: recorded score ${level.nodes}, search says ${nodes}`);
+  else if (level.difficulty !== difficultyOf(level.nodes)) failures.push(`${label(level)}: label does not match score`);
 
-  if (ids.has(level.id)) failures.push(`${level.name}: duplicate id ${level.id}`);
+  if (ids.has(level.id)) failures.push(`${label(level)}: duplicate id ${level.id}`);
   ids.add(level.id);
 
   const shape = level.board.pattern.join('/');
-  if (silhouettes.has(shape)) failures.push(`${level.name}: same silhouette as ${silhouettes.get(shape)}`);
-  silhouettes.set(shape, level.name);
+  if (silhouettes.has(shape)) failures.push(`${label(level)}: same silhouette as ${silhouettes.get(shape)}`);
+  silhouettes.set(shape, label(level));
 
   tally.set(level.difficulty, (tally.get(level.difficulty) ?? 0) + 1);
 }
 
-const scores = LEVELS.map((l) => l.nodes);
-const pieces = LEVELS.map((l) => l.pieces.length);
+const every = Array.from({ length: LEVEL_COUNT }, (_, i) => getLevel(i));
+const scores = every.map((l) => l.nodes);
+const pieces = every.map((l) => l.pieces.length);
 const sum = (xs) => xs.reduce((a, b) => a + b, 0);
 
-console.log(`checked ${LEVELS.length} levels in ${((Date.now() - started) / 1000).toFixed(1)}s\n`);
+console.log(`checked ${LEVEL_COUNT} levels in ${((Date.now() - started) / 1000).toFixed(1)}s\n`);
 console.log(`  difficulty   ${[...tally].map(([d, n]) => `${d} ${n}`).join(', ')}`);
 console.log(`  score        ${scores[0]} .. ${scores[scores.length - 1]}`);
 console.log(`  pieces       ${Math.min(...pieces)} .. ${Math.max(...pieces)} (${(sum(pieces) / pieces.length).toFixed(1)} average)`);
-console.log(`  board cells  ${Math.min(...LEVELS.map((l) => l.board.cells.length))} .. ${Math.max(...LEVELS.map((l) => l.board.cells.length))}`);
+console.log(`  board cells  ${Math.min(...every.map((l) => l.board.cells.length))} .. ${Math.max(...every.map((l) => l.board.cells.length))}`);
 console.log(`  silhouettes  ${silhouettes.size} distinct`);
 
 if (failures.length) {
@@ -113,6 +118,6 @@ if (failures.length) {
   failures.slice(0, 20).forEach((f) => console.log(`  ${f}`));
   if (failures.length > 20) console.log(`  ...and ${failures.length - 20} more`);
 } else {
-  console.log(`\nall ${LEVELS.length} levels are an exact fit with exactly one solution`);
+  console.log(`\nall ${LEVEL_COUNT} levels are an exact fit with exactly one solution`);
 }
 process.exit(failures.length === 0 ? 0 : 1);

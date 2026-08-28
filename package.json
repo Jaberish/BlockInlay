@@ -6,6 +6,7 @@
     "@expo/metro-runtime": "~57.0.14",
     "@react-native-async-storage/async-storage": "2.2.0",
     "expo": "~57.0.17",
+    "expo-audio": "~57.0.4",
     "expo-status-bar": "~57.0.1",
     "react": "19.2.3",
     "react-dom": "19.2.3",
@@ -24,7 +25,8 @@
     "web": "expo start --web",
     "test": "node --no-warnings --import ./scripts/register-ts.mjs scripts/test-placement.mjs",
     "verify-levels": "node --no-warnings --import ./scripts/register-ts.mjs scripts/verify-levels.mjs",
-    "generate-levels": "node scripts/generate-levels.mjs --count 950 --pool 80 --ramp-floor 18 --exclude scripts/drawn-silhouettes.json --out src/generated.ts"
+    "generate-levels": "node scripts/generate-levels.mjs --count 4800 --pool 70 --ramp-floor 18 --exclude scripts/drawn-silhouettes.json --out src/generated.ts",
+    "make-sound": "node scripts/make-sound.mjs"
   },
   "private": true
 }

@@ -1,16 +1,27 @@
 import React, { useEffect, useState } from 'react';
 import { BackHandler, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { LEVELS } from './levels';
 import { theme } from './theme';
 
 type Props = {
   solved: ReadonlySet<string>;
   onResetProgress: () => void;
   onBack: () => void;
+  soundOn: boolean;
+  onSetSoundOn: (on: boolean) => void;
+  musicOn: boolean;
+  onSetMusicOn: (on: boolean) => void;
 };
 
-export default function SettingsScreen({ solved, onResetProgress, onBack }: Props) {
+export default function SettingsScreen({
+  solved,
+  onResetProgress,
+  onBack,
+  soundOn,
+  onSetSoundOn,
+  musicOn,
+  onSetMusicOn,
+}: Props) {
   const insets = useSafeAreaInsets();
   const [confirming, setConfirming] = useState(false);
   const [cleared, setCleared] = useState(false);
@@ -24,8 +35,6 @@ export default function SettingsScreen({ solved, onResetProgress, onBack }: Prop
   }, [onBack]);
 
   const count = solved.size;
-  const total = LEVELS.length;
-  const share = total === 0 ? 0 : count / total;
 
   return (
     <View style={styles.root}>
@@ -49,18 +58,56 @@ export default function SettingsScreen({ solved, onResetProgress, onBack }: Prop
           <Text style={styles.title}>Settings</Text>
         </View>
 
+        <Text style={styles.section}>ABOUT</Text>
+        <View style={styles.card}>
+          <Text style={styles.cardText}>
+            Every board holds exactly as many squares as its pieces cover, and there is only one
+            arrangement that fills it. Pieces never rotate, so each one has a single home.
+          </Text>
+          <Text style={[styles.cardText, styles.aboutSpacer]}>
+            Hints reveal one piece in its true home. You hold up to three, and one comes back every
+            hour.
+          </Text>
+        </View>
+        <Text style={styles.section}>SOUND</Text>
+        <View style={styles.card}>
+          <Pressable
+            onPress={() => onSetMusicOn(!musicOn)}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: musicOn }}
+            accessibilityLabel="Music"
+            style={({ pressed }) => [styles.toggleRow, pressed && styles.pressed]}
+          >
+            <View style={styles.toggleText}>
+              <Text style={styles.cardTitle}>Music</Text>
+              <Text style={styles.cardText}>The background track, looping while you play.</Text>
+            </View>
+            <View style={[styles.switchTrack, musicOn && styles.switchTrackOn]}>
+              <View style={[styles.switchKnob, musicOn && styles.switchKnobOn]} />
+            </View>
+          </Pressable>
+
+          <View style={styles.divider} />
+
+          <Pressable
+            onPress={() => onSetSoundOn(!soundOn)}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: soundOn }}
+            accessibilityLabel="Sound effects"
+            style={({ pressed }) => [styles.toggleRow, pressed && styles.pressed]}
+          >
+            <View style={styles.toggleText}>
+              <Text style={styles.cardTitle}>Sound effects</Text>
+              <Text style={styles.cardText}>A chime when a board is finished.</Text>
+            </View>
+            <View style={[styles.switchTrack, soundOn && styles.switchTrackOn]}>
+              <View style={[styles.switchKnob, soundOn && styles.switchKnobOn]} />
+            </View>
+          </Pressable>
+        </View>
+
         <Text style={styles.section}>PROGRESS</Text>
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>
-            {count} of {total} boards solved
-          </Text>
-          <View style={styles.barTrack}>
-            <View style={[styles.barFill, { width: `${Math.round(share * 100)}%` }]} />
-          </View>
-          <Text style={styles.cardText}>
-            Solved boards are kept on this device, so they survive closing the app.
-          </Text>
-
           {confirming ? (
             <View style={styles.confirm}>
               <Text style={styles.confirmText}>
@@ -106,19 +153,48 @@ export default function SettingsScreen({ solved, onResetProgress, onBack }: Prop
           {cleared ? <Text style={styles.cleared}>Progress cleared — every board is unsolved again.</Text> : null}
         </View>
 
-        <Text style={styles.section}>ABOUT</Text>
-        <View style={styles.card}>
-          <Text style={styles.cardText}>
-            Every board holds exactly as many squares as its pieces cover, and there is only one
-            arrangement that fills it. Pieces never rotate, so each one has a single home.
-          </Text>
-        </View>
       </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  },
+  divider: {
+    height: 1,
+    marginVertical: 14,
+    backgroundColor: theme.panelEdge,
+  },
+  toggleText: {
+    flex: 1,
+  },
+  switchTrack: {
+    width: 52,
+    height: 31,
+    borderRadius: 999,
+    padding: 3,
+    justifyContent: 'center',
+    backgroundColor: theme.panelEdge,
+  },
+  switchTrackOn: {
+    backgroundColor: theme.accent,
+  },
+  switchKnob: {
+    width: 25,
+    height: 25,
+    borderRadius: 999,
+    backgroundColor: theme.text,
+  },
+  switchKnobOn: {
+    alignSelf: 'flex-end',
+  },
+  aboutSpacer: {
+    marginTop: 10,
+  },
   root: {
     flex: 1,
     backgroundColor: theme.bg,
@@ -178,19 +254,6 @@ const styles = StyleSheet.create({
     color: theme.textDim,
     fontSize: 13,
     lineHeight: 19,
-  },
-  barTrack: {
-    height: 8,
-    borderRadius: 99,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    marginTop: 12,
-    marginBottom: 12,
-    overflow: 'hidden',
-  },
-  barFill: {
-    height: '100%',
-    borderRadius: 99,
-    backgroundColor: theme.accent,
   },
   dangerOutline: {
     marginTop: 16,

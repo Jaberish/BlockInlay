@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { levelById } from './levels';
+import { indexOfId } from './levels';
 
 // Named before the app was: renaming this key would look tidier but would throw
 // away the saved progress of anyone who already has the app installed.
@@ -37,8 +37,11 @@ export function useProgress(): Progress {
         const raw = await AsyncStorage.getItem(STORAGE_KEY);
         const parsed = raw ? JSON.parse(raw) : null;
         if (Array.isArray(parsed)) {
-          // ignore anything that isn't a level we still ship
-          stored = parsed.filter((id): id is string => typeof id === 'string' && levelById(id) != null);
+          // ignore anything that isn't a level we still ship. `indexOfId` rather
+          // than looking the level up: this runs over every saved id at launch,
+          // and building thousands of levels to check they exist would undo the
+          // whole point of loading them lazily.
+          stored = parsed.filter((id): id is string => typeof id === 'string' && indexOfId(id) >= 0);
         }
       } catch {
         // no saved progress, or it can't be read — start empty rather than fail

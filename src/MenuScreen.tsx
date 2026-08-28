@@ -1,6 +1,8 @@
-import React, { useCallback, useMemo, useRef } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
+  Animated,
   FlatList,
+  PanResponder,
   Pressable,
   StyleSheet,
   Text,
@@ -9,10 +11,12 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Blocks from './Blocks';
-import { LEVELS, type Level } from './levels';
+import { LEVEL_COUNT, getLevel, idAt, type Level } from './levels';
 import {
   buildMenu,
   heightOf,
+  itemAtOffset,
+  scrubOffset,
   GRID_GAP,
   ROW_HEIGHT,
   SECTION_HEIGHT,
@@ -24,9 +28,15 @@ import { theme } from './theme';
 const PADDING = 18;
 /** the fixed box each board silhouette is scaled to fit */
 const THUMB_HEIGHT = 84;
+/** the grab strip down the right edge, and the bar drawn inside it */
+const SCRUBBER_WIDTH = 30;
+const BAR_WIDTH = 6;
+const MIN_THUMB = 48;
 
 type Props = {
   solved: ReadonlySet<string>;
+  /** false until saved progress has been read, so the list opens in the right place */
+  loaded: boolean;
   onPick: (levelId: string) => void;
   onOpenSettings: () => void;
 };
@@ -53,21 +63,71 @@ function BoardThumb({ level, width, solved }: { level: Level; width: number; sol
   );
 }
 
-export default function MenuScreen({ solved, onPick, onOpenSettings }: Props) {
+export default function MenuScreen({ solved, loaded, onPick, onOpenSettings }: Props) {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const list = useRef<FlatList<Item>>(null);
 
   const columns = width >= 700 ? 3 : 2;
-  const tileWidth = Math.floor((width - PADDING * 2 - GRID_GAP * (columns - 1)) / columns);
-  const { items, itemOfLevel, offsets } = useMemo(() => buildMenu(columns), [columns]);
+  const tileWidth = Math.floor(
+    (width - PADDING * 2 - SCRUBBER_WIDTH - GRID_GAP * (columns - 1)) / columns,
+  );
+  const { items, itemOfLevel, offsets, height } = useMemo(() => buildMenu(columns), [columns]);
 
-  const next = useMemo(() => LEVELS.find((level) => !solved.has(level.id)), [solved]);
+  const [listHeight, setListHeight] = useState(0);
+  const [scrubbing, setScrubbing] = useState(false);
+  const [scrubLabel, setScrubLabel] = useState('');
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const grabbedAt = useRef(0);
 
-  const jumpToNext = useCallback(() => {
-    if (!next) return;
-    list.current?.scrollToIndex({ index: itemOfLevel[next.index], viewPosition: 0.35, animated: true });
-  }, [itemOfLevel, next]);
+  /** the furthest level the player has finished — where the list should open */
+  const furthestSolved = useMemo(() => {
+    if (!solved.size) return 0;
+    for (let i = LEVEL_COUNT - 1; i >= 0; i--) if (solved.has(idAt(i))) return i;
+    return 0;
+  }, [solved]);
+
+  const maxScroll = Math.max(1, height - listHeight);
+  const thumbHeight = Math.max(
+    MIN_THUMB,
+    listHeight > 0 ? (listHeight * listHeight) / height : MIN_THUMB,
+  );
+  const travel = Math.max(1, listHeight - thumbHeight);
+
+  const thumbY = scrollY.interpolate({
+    inputRange: [0, maxScroll],
+    outputRange: [0, travel],
+    extrapolate: 'clamp',
+  });
+
+  /** drag anywhere on the strip to fly through the list */
+  const scrubTo = useCallback(
+    (y: number) => {
+      const offset = scrubOffset(y, thumbHeight, travel, maxScroll);
+      list.current?.scrollToOffset({ offset, animated: false });
+      const item = items[itemAtOffset(offsets, offset)];
+      setScrubLabel(item?.kind === 'row' ? `${item.levels[0] + 1}` : (item?.label ?? ''));
+    },
+    [items, maxScroll, offsets, thumbHeight, travel],
+  );
+
+  const scrubber = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderGrant: (event) => {
+          setScrubbing(true);
+          grabbedAt.current = event.nativeEvent.locationY;
+          scrubTo(grabbedAt.current);
+        },
+        // dy rather than absolute coordinates: it needs no page-vs-view bookkeeping
+        onPanResponderMove: (_event, gesture) => scrubTo(grabbedAt.current + gesture.dy),
+        onPanResponderRelease: () => setScrubbing(false),
+        onPanResponderTerminate: () => setScrubbing(false),
+      }),
+    [scrubTo],
+  );
 
   const layout = useCallback(
     (_data: ArrayLike<Item> | null | undefined, index: number) => ({
@@ -90,16 +150,17 @@ export default function MenuScreen({ solved, onPick, onOpenSettings }: Props) {
       }
       return (
         <View style={[styles.row, { gap: GRID_GAP, height: ROW_HEIGHT }]}>
-          {item.levels.map((level) => {
+          {item.levels.map((index) => {
+            const level = getLevel(index);
             const isSolved = solved.has(level.id);
             return (
               <Pressable
                 key={level.id}
                 onPress={() => onPick(level.id)}
                 accessibilityRole="button"
-                accessibilityLabel={`Level ${level.index + 1}, ${level.name}, ${level.difficulty}${
-                  isSolved ? ', solved' : ''
-                }`}
+                accessibilityLabel={`Level ${index + 1}${level.name ? `, ${level.name}` : ''}, ${
+                  level.difficulty
+                }${isSolved ? ', solved' : ''}`}
                 style={({ pressed }) => [
                   styles.tile,
                   { width: tileWidth, height: TILE_HEIGHT },
@@ -108,15 +169,16 @@ export default function MenuScreen({ solved, onPick, onOpenSettings }: Props) {
                 ]}
               >
                 <View style={styles.tileTop}>
-                  <Text style={styles.number}>{level.index + 1}</Text>
+                  <Text style={styles.number}>{index + 1}</Text>
                   {isSolved ? <Text style={styles.tick}>✓</Text> : null}
                 </View>
                 <BoardThumb level={level} width={tileWidth - 24} solved={isSolved} />
                 <Text style={styles.name} numberOfLines={1}>
-                  {level.name}
+                  {level.name ?? level.difficulty}
                 </Text>
                 <Text style={styles.meta}>
-                  {level.difficulty} · {level.pieces.length} pieces
+                  {level.name ? `${level.difficulty} · ` : ''}
+                  {level.pieces.length} pieces
                 </Text>
               </Pressable>
             );
@@ -133,8 +195,8 @@ export default function MenuScreen({ solved, onPick, onOpenSettings }: Props) {
         <View style={styles.headerText}>
           <Text style={styles.title}>Block Inlay</Text>
           <Text style={styles.subtitle}>
-            {LEVELS.length} boards · every one has exactly one perfect fit
-            {solved.size > 0 ? ` · ${solved.size} solved` : ''}
+            {solved.size > 0 ? `${solved.size.toLocaleString()} solved · ` : ''}
+            every board has exactly one perfect fit
           </Text>
         </View>
         <Pressable
@@ -148,30 +210,52 @@ export default function MenuScreen({ solved, onPick, onOpenSettings }: Props) {
         </Pressable>
       </View>
 
-      {next && next.index > 0 ? (
-        <Pressable
-          onPress={jumpToNext}
-          accessibilityRole="button"
-          style={({ pressed }) => [styles.continueButton, pressed && styles.tilePressed]}
-        >
-          <Text style={styles.continueText}>Jump to level {next.index + 1}</Text>
-        </Pressable>
-      ) : null}
+      <View style={styles.body} onLayout={(e) => setListHeight(e.nativeEvent.layout.height)}>
+        {loaded ? (
+          <FlatList
+            ref={list}
+            // numColumns is baked into the rows, so a width change has to rebuild them
+            key={columns}
+            data={items}
+            renderItem={renderItem}
+            keyExtractor={(item) => item.key}
+            getItemLayout={layout}
+            // open where the player left off rather than back at level one; a
+            // player with no progress starts at the very top, header and all
+            initialScrollIndex={solved.size ? itemOfLevel[furthestSolved] : 0}
+            onScrollToIndexFailed={() => {}}
+            initialNumToRender={8}
+            windowSize={7}
+            scrollEventThrottle={16}
+            onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
+              useNativeDriver: false,
+            })}
+            contentContainerStyle={{
+              paddingLeft: PADDING,
+              paddingRight: PADDING + SCRUBBER_WIDTH - GRID_GAP,
+              paddingBottom: insets.bottom + 24,
+            }}
+            showsVerticalScrollIndicator={false}
+          />
+        ) : null}
 
-      <FlatList
-        ref={list}
-        // numColumns is baked into the rows, so a width change has to rebuild them
-        key={columns}
-        data={items}
-        renderItem={renderItem}
-        keyExtractor={(item) => item.key}
-        getItemLayout={layout}
-        initialNumToRender={8}
-        windowSize={7}
-        scrollEventThrottle={16}
-        contentContainerStyle={{ paddingHorizontal: PADDING, paddingBottom: insets.bottom + 24 }}
-        showsVerticalScrollIndicator={false}
-      />
+        <View style={styles.scrubber} {...scrubber.panHandlers}>
+          <View style={styles.scrubberTrack} />
+          <Animated.View
+            style={[
+              styles.scrubberThumb,
+              scrubbing && styles.scrubberThumbHeld,
+              { height: thumbHeight, transform: [{ translateY: thumbY }] },
+            ]}
+          />
+        </View>
+
+        {scrubbing ? (
+          <Animated.View style={[styles.scrubBubble, { transform: [{ translateY: thumbY }] }]}>
+            <Text style={styles.scrubBubbleText}>{scrubLabel}</Text>
+          </Animated.View>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -180,6 +264,9 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: theme.bg,
+  },
+  body: {
+    flex: 1,
   },
   header: {
     flexDirection: 'row',
@@ -217,21 +304,49 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginTop: 4,
   },
-  continueButton: {
-    alignSelf: 'flex-start',
-    marginHorizontal: PADDING,
-    marginBottom: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+  scrubber: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: SCRUBBER_WIDTH,
+    alignItems: 'center',
+  },
+  scrubberTrack: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: 2,
+    borderRadius: 1,
+    backgroundColor: theme.panelEdge,
+  },
+  scrubberThumb: {
+    width: BAR_WIDTH,
+    borderRadius: BAR_WIDTH / 2,
+    backgroundColor: theme.panelEdgeHot,
+  },
+  scrubberThumbHeld: {
+    width: BAR_WIDTH + 4,
+    borderRadius: (BAR_WIDTH + 4) / 2,
+    backgroundColor: theme.accent,
+  },
+  scrubBubble: {
+    position: 'absolute',
+    right: SCRUBBER_WIDTH + 2,
+    top: 0,
+    minWidth: 62,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     borderRadius: 999,
     backgroundColor: theme.panel,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: theme.panelEdgeHot,
+    alignItems: 'center',
   },
-  continueText: {
+  scrubBubbleText: {
     color: theme.accent,
-    fontSize: 13,
-    fontWeight: '700',
+    fontSize: 15,
+    fontWeight: '800',
   },
   section: {
     height: SECTION_HEIGHT,

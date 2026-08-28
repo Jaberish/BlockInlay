@@ -2,10 +2,15 @@
  * Rules of the game, checked without a screen:
  *   npm test
  */
-import { LEVELS, cellKey, levelById, sectionOf } from '../src/levels.ts';
-import { buildMenu, heightOf } from '../src/menuLayout.ts';
+import { LEVEL_COUNT, getLevel, cellKey, levelById, idAt, indexOfId, sectionAt } from '../src/levels.ts';
+import { buildMenu, heightOf, itemAtOffset, scrubOffset } from '../src/menuLayout.ts';
+import { settle, spend, refillProgress, FULL_BANK, MAX_HINTS, REFILL_MS } from '../src/hintBank.ts';
+import { nextHint, solveLevel } from '../src/solve.ts';
 import { boardCell, trayLayout, CHROME, ROOT_PADDING } from '../src/gameLayout.ts';
 import { emptyBoard, fitsAt, isSolved, occupiedExcept, snapToBoard } from '../src/placement.ts';
+
+/** every level, built once; the app builds them lazily but the tests want all of them */
+const EVERY = Array.from({ length: LEVEL_COUNT }, (_, i) => getLevel(i));
 
 let failures = 0;
 const check = (name, ok, detail = '') => {
@@ -44,7 +49,7 @@ check('a piece never lands on an occupied cell', !overlapped, at(hit));
 let drops = 0;
 let illegal = 0;
 let unplaceable = [];
-for (const level of LEVELS) {
+for (const level of EVERY) {
   const board = emptyBoard(level);
   // one piece already down, so occupancy is exercised too
   board[level.pieces[0].id] = { row: 0, col: 0 };
@@ -65,11 +70,11 @@ for (const level of LEVELS) {
     if (!anywhere) unplaceable.push(`${level.name}/${piece.id}`);
   }
 }
-check(`every snap result is legal, all ${LEVELS.length} levels (${drops} drops tested)`, illegal === 0, `${illegal} illegal`);
+check(`every snap result is legal, all ${LEVEL_COUNT} levels (${drops} drops tested)`, illegal === 0, `${illegal} illegal`);
 check('every piece can be dropped somewhere', unplaceable.length === 0, unplaceable.join(', '));
 
 // ---- each level's own solution is reachable and recognised ----
-for (const level of LEVELS) {
+for (const level of EVERY) {
   // rebuild the solution by placing pieces greedily into the one legal tiling
   const board = emptyBoard(level);
   let placed = 0;
@@ -101,11 +106,12 @@ for (const level of LEVELS) {
   );
 }
 
-check('a fresh board is not solved', LEVELS.every((l) => !isSolved(l, emptyBoard(l))));
+check('a fresh board is not solved', EVERY.every((l) => !isSolved(l, emptyBoard(l))));
 
 // ---- the level list -------------------------------------------------------
-// The menu places 1000 tiles by arithmetic rather than by measuring them, so a
-// wrong offset here does not throw — it silently scrolls to blank space.
+// The menu places thousands of tiles by arithmetic rather than by measuring
+// them, so a wrong offset here does not throw — it silently scrolls to blank
+// space.
 
 for (const columns of [2, 3]) {
   const { items, itemOfLevel, offsets, height } = buildMenu(columns);
@@ -113,7 +119,7 @@ for (const columns of [2, 3]) {
   const listed = items.filter((i) => i.kind === 'row').flatMap((i) => i.levels);
   check(
     `${columns} columns: every level appears exactly once, in order`,
-    listed.length === LEVELS.length && listed.every((level, i) => level.index === i),
+    listed.length === LEVEL_COUNT && listed.every((index, i) => index === i),
   );
 
   check(
@@ -121,16 +127,19 @@ for (const columns of [2, 3]) {
     items.every((item) => item.kind === 'section' || item.levels.length <= columns),
   );
 
+  const sections = new Set(Array.from({ length: LEVEL_COUNT }, (_, i) => sectionAt(i)));
   check(
     `${columns} columns: each section heading is announced once, before its levels`,
-    items.filter((i) => i.kind === 'section').length === new Set(LEVELS.map(sectionOf)).size &&
-      items.every((item, i) =>
-        item.kind === 'section' ||
-        item.levels.every((level) => {
-          for (let j = i; j >= 0; j--) if (items[j].kind === 'section') return items[j].label === sectionOf(level);
-          return false;
-        }),
-      ),
+    items.filter((i) => i.kind === 'section').length === sections.size &&
+      items.every((item, i) => {
+        if (item.kind === 'section') return true;
+        for (let j = i; j >= 0; j--) {
+          if (items[j].kind === 'section') {
+            return item.levels.every((index) => items[j].label === sectionAt(index));
+          }
+        }
+        return false;
+      }),
   );
 
   check(
@@ -155,9 +164,155 @@ for (const columns of [2, 3]) {
 
   check(
     `${columns} columns: jumping to a level lands on the item that holds it`,
-    LEVELS.every((level) => {
-      const item = items[itemOfLevel[level.index]];
-      return item.kind === 'row' && item.levels.includes(level);
+    Array.from({ length: LEVEL_COUNT }).every((_, index) => {
+      const item = items[itemOfLevel[index]];
+      return item.kind === 'row' && item.levels.includes(index);
+    }),
+  );
+
+  {
+    // the strip is as tall as the viewport; the thumb is grabbed by its middle
+    const view = 715;
+    const maxScroll = height - view;
+    const thumb = Math.max(48, (view * view) / height);
+    const travel = view - thumb;
+    check(
+      `${columns} columns: dragging the scrollbar to either end reaches either end`,
+      scrubOffset(thumb / 2, thumb, travel, maxScroll) === 0 &&
+        Math.abs(scrubOffset(view - thumb / 2, thumb, travel, maxScroll) - maxScroll) < 1e-6,
+    );
+    check(
+      `${columns} columns: dragging past either end does not overshoot`,
+      scrubOffset(-500, thumb, travel, maxScroll) === 0 &&
+        scrubOffset(view + 500, thumb, travel, maxScroll) === maxScroll,
+    );
+    check(
+      `${columns} columns: the middle of the strip is the middle of the list`,
+      Math.abs(scrubOffset(view / 2, thumb, travel, maxScroll) - maxScroll / 2) < 1,
+    );
+  }
+
+  check(
+    `${columns} columns: the scrubber maps every offset to a real item`,
+    [0, 1, height / 3, height / 2, height - 1].every((y) => {
+      const i = itemAtOffset(offsets, y);
+      return i >= 0 && i < items.length && offsets[i] <= y;
+    }),
+  );
+}
+
+// ---- level identity -------------------------------------------------------
+// Saved progress is keyed by id, and ids are derived rather than stored, so the
+// derivation has to round-trip for every level.
+
+check(
+  'every level id maps back to its own index',
+  Array.from({ length: LEVEL_COUNT }).every((_, i) => indexOfId(idAt(i)) === i),
+);
+check(
+  'ids are unique',
+  new Set(Array.from({ length: LEVEL_COUNT }, (_, i) => idAt(i))).size === LEVEL_COUNT,
+);
+check(
+  'unknown ids are rejected rather than guessed at',
+  ['', 'g0', 'g', `g${LEVEL_COUNT + 5}`, 'gx', 'nope', 'g1.5'].every((id) => indexOfId(id) === -1),
+);
+
+// ---- hints ----------------------------------------------------------------
+// A refill measured against the clock is easy to get subtly wrong, and the bug
+// only shows up an hour later.
+
+check('a fresh bank is full', FULL_BANK.count === MAX_HINTS);
+check(
+  'spending from a full bank starts the clock',
+  spend(FULL_BANK, 1000).count === MAX_HINTS - 1 && spend(FULL_BANK, 1000).since === 1000,
+);
+check(
+  'spending again does not restart the clock',
+  spend(spend(FULL_BANK, 1000), 9999).since === 1000,
+);
+check('an empty bank cannot be spent', spend({ count: 0, since: 0 }, 5).count === 0);
+check(
+  'one hint comes back after an hour',
+  settle({ count: 0, since: 0 }, REFILL_MS).count === 1,
+);
+check(
+  'nothing comes back before the hour is up',
+  settle({ count: 0, since: 0 }, REFILL_MS - 1).count === 0,
+);
+check(
+  'the leftover minutes carry into the next hour',
+  settle({ count: 0, since: 0 }, REFILL_MS * 1.5).since === REFILL_MS,
+);
+check(
+  'a long absence refills the bank but does not overflow it',
+  settle({ count: 0, since: 0 }, REFILL_MS * 500).count === MAX_HINTS,
+);
+check(
+  'a full bank stops the clock',
+  settle({ count: 0, since: 0 }, REFILL_MS * 500).since === 0,
+);
+check(
+  'the ring fills across the hour and reads full when the bank is',
+  refillProgress({ count: 0, since: 0 }, 0) === 0 &&
+    Math.abs(refillProgress({ count: 0, since: 0 }, REFILL_MS / 2) - 0.5) < 1e-9 &&
+    refillProgress(FULL_BANK, 12345) === 1,
+);
+check(
+  'spending never takes the bank below empty, however often it is called',
+  (() => {
+    let bank = FULL_BANK;
+    for (let i = 0; i < 20; i++) bank = spend(bank, 1000 + i);
+    return bank.count === 0;
+  })(),
+);
+
+// ---- hints on a real board -------------------------------------------------
+
+{
+  const sample = [0, 1, 7, 42, 199, Math.floor(LEVEL_COUNT / 2), LEVEL_COUNT - 1]
+    .filter((i, at, all) => i < LEVEL_COUNT && all.indexOf(i) === at)
+    .map((i) => getLevel(i));
+
+  check(
+    'every sampled level has a solution the hint can point at',
+    sample.every((level) => {
+      const answer = solveLevel(level);
+      if (!answer) return false;
+      const filled = new Set();
+      for (const piece of level.pieces) {
+        const spot = answer[piece.id];
+        if (!spot) return false;
+        for (const c of piece.cells) filled.add(cellKey(spot.row + c.row, spot.col + c.col));
+      }
+      return filled.size === level.board.cells.length;
+    }),
+  );
+
+  check(
+    'hints fill an empty board one piece at a time and then stop',
+    sample.every((level) => {
+      const board = emptyBoard(level);
+      for (let i = 0; i < level.pieces.length; i++) {
+        const hint = nextHint(level, board);
+        if (!hint) return false;
+        board[hint.pieceId] = hint.at;
+      }
+      return nextHint(level, board) === null && isSolved(level, board);
+    }),
+  );
+
+  check(
+    'a hint corrects a piece that was put in the wrong place',
+    sample.every((level) => {
+      const answer = solveLevel(level);
+      const board = emptyBoard(level);
+      // put every piece where it belongs, then move one somewhere it does not
+      for (const piece of level.pieces) board[piece.id] = answer[piece.id];
+      const victim = level.pieces[0];
+      board[victim.id] = { row: answer[victim.id].row + 1, col: answer[victim.id].col };
+      const hint = nextHint(level, board);
+      return hint !== null && hint.pieceId === victim.id;
     }),
   );
 }
@@ -182,7 +337,7 @@ for (const screen of SCREENS) {
   let smallestCell = Infinity;
   let deepestTray = 0;
 
-  for (const level of LEVELS) {
+  for (const level of EVERY) {
     const tray = trayLayout(level, width, height);
     const cell = boardCell(level, width, height, insets, tray);
     const boardWidth = level.board.cols * cell;
@@ -211,7 +366,7 @@ for (const screen of SCREENS) {
 }
 
 // the tray shrinks pieces rather than dropping them, so every piece needs a slot
-const cramped = LEVELS.find((level) => {
+const cramped = EVERY.find((level) => {
   const tray = trayLayout(level, 320, 568);
   return tray.cell < 11 || tray.rows > 3;
 });

@@ -2,9 +2,13 @@
  * Every level is just data: the board drawn with `#`, and the pieces drawn the
  * same way. Nothing else in the app knows about any particular level.
  *
- * There are 1000 of them, from two sources:
- *   - handmade.ts — 50 drawn silhouettes that look like something, up front;
- *   - generated.ts — 950 machine-made boards, written by `npm run generate-levels`.
+ * They come from two places:
+ *   - handmade.ts — 200 drawn silhouettes that look like something, up front,
+ *     each with a name;
+ *   - generated.ts — the machine-made boards that follow, written by
+ *     `npm run generate-levels`. They have no names: they are deliberate
+ *     abstract shapes rather than pictures of things, and a number is a more
+ *     honest label for them than an invented word.
  *
  * Two rules hold for every one of them, both re-checked by `npm run verify-levels`:
  *   1. the pieces add up to exactly as many cells as the board, so a finished
@@ -17,6 +21,10 @@
  * for how much thinking a level demands, and the difficulty labels are cut from
  * it, so a level's label follows from the puzzle rather than from where it
  * happens to sit in the list.
+ *
+ * Only the scores are parsed up front. With thousands of levels, building every
+ * board and piece at launch would cost a visible pause for work the player will
+ * never look at, so a level is assembled the first time something asks for it.
  */
 
 import { GENERATED } from './generated';
@@ -35,12 +43,12 @@ export type LevelDef = {
   pieces: string[][];
 };
 
-/** score thresholds, chosen to spread the 1000 levels across the five labels */
+/** score thresholds, chosen to spread the levels across the five labels */
 const BANDS: Array<[number, Difficulty]> = [
-  [25, 'Warm-up'],
-  [60, 'Easy'],
-  [150, 'Medium'],
-  [330, 'Hard'],
+  [30, 'Warm-up'],
+  [80, 'Easy'],
+  [200, 'Medium'],
+  [500, 'Hard'],
   [Infinity, 'Expert'],
 ];
 
@@ -72,7 +80,8 @@ export type Piece = {
 
 export type Level = {
   id: string;
-  name: string;
+  /** drawn boards have a name; generated ones go by their number */
+  name?: string;
   difficulty: Difficulty;
   nodes: number;
   index: number;
@@ -112,7 +121,7 @@ const buildBoard = (pattern: string[]) => {
     ...extent(cells),
     /**
      * Built on first use. Only the level being played needs the lookup set, and
-     * holding one per level would mean 30,000 strings resident for nothing.
+     * holding one per level would mean a lot of strings resident for nothing.
      */
     get keys(): Set<string> {
       return (keys ??= new Set(cells.map((c) => cellKey(c.row, c.col))));
@@ -120,56 +129,91 @@ const buildBoard = (pattern: string[]) => {
   };
 };
 
-const build = (def: LevelDef, index: number): Level => ({
-  id: def.id,
-  name: def.name,
-  difficulty: difficultyOf(def.nodes),
-  nodes: def.nodes,
-  index,
-  board: buildBoard(def.board),
-  pieces: def.pieces.map((pattern, i) => {
-    const cells = parse(pattern);
-    return {
-      id: `${def.id}:${i}`,
-      cells,
-      ...extent(cells),
-      ...PALETTE[i % PALETTE.length],
-    };
-  }),
-});
+const GENERATED_LINES = GENERATED.trim().split('\n');
 
-/** `Bloom 12` -> `bloom-12`, so a level keeps its saved progress across rebuilds */
-const slug = (name: string) => name.toLowerCase().replace(/\s+/g, '-');
+/** the drawn boards run first; the generated ramp starts over gently after them */
+export const DRAWN_COUNT = HANDMADE.length;
+export const LEVEL_COUNT = DRAWN_COUNT + GENERATED_LINES.length;
 
-const decode = (line: string): LevelDef => {
-  const [name, nodes, board, pieces] = line.split('|');
+/**
+ * Every level's score, read up front. It is one number per level, and the menu
+ * needs all of them at once to work out where its sections start and end.
+ */
+const SCORES = new Int32Array(LEVEL_COUNT);
+for (let i = 0; i < DRAWN_COUNT; i++) SCORES[i] = HANDMADE[i].nodes;
+for (let i = 0; i < GENERATED_LINES.length; i++) {
+  const line = GENERATED_LINES[i];
+  SCORES[DRAWN_COUNT + i] = Number(line.slice(0, line.indexOf('|')));
+}
+
+export const scoreAt = (index: number) => SCORES[index];
+export const difficultyAt = (index: number) => difficultyOf(SCORES[index]);
+export const nameAt = (index: number) => (index < DRAWN_COUNT ? HANDMADE[index].name : undefined);
+
+/**
+ * What the menu groups a level under. The drawn boards are one chapter of their
+ * own rather than five difficulty bands, because their ramp is separate from the
+ * generated one that follows.
+ */
+export const sectionAt = (index: number): string =>
+  index < DRAWN_COUNT ? 'Drawn boards' : difficultyAt(index);
+
+export const idAt = (index: number) =>
+  index < DRAWN_COUNT ? HANDMADE[index].id : `g${index - DRAWN_COUNT + 1}`;
+
+const DRAWN_INDEX = new Map(HANDMADE.map((def, i) => [def.id, i]));
+
+export const indexOfId = (id: string): number => {
+  const drawn = DRAWN_INDEX.get(id);
+  if (drawn !== undefined) return drawn;
+  if (id.charCodeAt(0) !== 103 /* g */) return -1;
+  const n = Number(id.slice(1));
+  if (!Number.isInteger(n) || n < 1 || n > GENERATED_LINES.length) return -1;
+  return DRAWN_COUNT + n - 1;
+};
+
+const defAt = (index: number): LevelDef => {
+  if (index < DRAWN_COUNT) return HANDMADE[index];
+  const [nodes, board, pieces] = GENERATED_LINES[index - DRAWN_COUNT].split('|');
   return {
-    id: slug(name),
-    name,
+    id: idAt(index),
+    name: '',
     nodes: Number(nodes),
     board: board.split('/'),
     pieces: pieces.split(';').map((piece) => piece.split('/')),
   };
 };
 
-const DEFS: LevelDef[] = [...HANDMADE, ...GENERATED.trim().split('\n').map(decode)];
+const build = (index: number): Level => {
+  const def = defAt(index);
+  return {
+    id: def.id,
+    name: index < DRAWN_COUNT ? def.name : undefined,
+    difficulty: difficultyOf(def.nodes),
+    nodes: def.nodes,
+    index,
+    board: buildBoard(def.board),
+    pieces: def.pieces.map((pattern, i) => {
+      const cells = parse(pattern);
+      return {
+        id: `${def.id}:${i}`,
+        cells,
+        ...extent(cells),
+        ...PALETTE[i % PALETTE.length],
+      };
+    }),
+  };
+};
 
-export const LEVELS: Level[] = DEFS.map(build);
+const CACHE: Array<Level | undefined> = new Array(LEVEL_COUNT);
 
-/** the drawn boards run first; the generated ramp starts over gently after them */
-export const DRAWN_COUNT = HANDMADE.length;
+/** the level at this position, assembled on first use and kept */
+export const getLevel = (index: number): Level => (CACHE[index] ??= build(index));
 
-/**
- * What the menu groups a level under. The drawn boards are one chapter of their
- * own rather than five difficulty bands, because their difficulty ramp is
- * separate from the generated one that follows.
- */
-export const sectionOf = (level: Level) =>
-  level.index < DRAWN_COUNT ? 'Drawn boards' : level.difficulty;
-
-const BY_ID = new Map(LEVELS.map((level) => [level.id, level]));
-
-export const levelById = (id: string) => BY_ID.get(id);
+export const levelById = (id: string): Level | undefined => {
+  const index = indexOfId(id);
+  return index < 0 ? undefined : getLevel(index);
+};
 
 export const pieceCellCount = (level: Level) =>
   level.pieces.reduce((n, p) => n + p.cells.length, 0);
