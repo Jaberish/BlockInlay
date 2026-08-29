@@ -55,6 +55,23 @@ const FUSE_MS = 460;
 /** and a beat after that to take it in, before it starts to turn */
 const SETTLE_MS = 700;
 /**
+ * The light that comes off the solid the moment it becomes one.
+ *
+ * It goes off as the seams close rather than after, so what the player sees is
+ * the pieces fusing *into* the flash and not a finished object being lit — the
+ * light is the last piece going in. It is over well before the turn starts, so
+ * the thing that goes on forever afterwards is still the quiet part.
+ *
+ * The board is already carrying a chime, a banner and a ring by this point, so
+ * this is short and it is only light: no movement of the object itself, which
+ * would be a fourth thing arriving at once.
+ */
+const FLARE_MS = 620;
+/** how far the light throws past the solid, as a fraction of one square */
+const FLARE_REACH = 1.5;
+/** and how much of it there is at its brightest */
+const FLARE = 0.5;
+/**
  * The deepest shade a face is laid under when it has turned out of the light.
  *
  * Well short of black, because a face turned away from a light is not in the
@@ -144,35 +161,6 @@ const FLANK_DARK = 0.36;
  * and would land on the joins, which is exactly what the rest of this avoids.
  */
 const RAMP = 0.13;
-/**
- * The light and shade a squared-off corner keeps, as the rims either side of it
- * would have left there.
- *
- * A corner filled back in flat is a corner with the edge lighting missing out of
- * it, and where the rims run up to it their roll stops short in a curve — which
- * is the highlight fading away a few pixels before the join, and the reason the
- * two pieces still read as not quite meeting.
- *
- * What shows of the fill is the sliver outside the arc, which is the very outside
- * of the corner — so what belongs there is the *outermost* band of the roll and
- * not the whole of it. That is a tenth of the way to white along the top and a
- * seventh of the way to black under the foot; the roll is three times that where
- * it has room to build up, and putting that much on the sliver paints a bright
- * crescent round every corner instead of hiding one.
- */
-const CREST_CORNER = 0.1;
-const FOOT_CORNER = -0.14;
-
-/**
- * How quickly a corner squares off once the side behind it opens.
- *
- * Four times the width of the side, so the corner is square by the time that
- * side is wider than the corner was round — about four hundredths of a turn.
- * Slower and the notch is still there while the side is opening; faster and the
- * corner snaps square while there is nothing beside it yet to square up to.
- */
-const SQUARING = 4;
-
 /**
  * How spread out the sides have to be for the corners between them to mean
  * anything, as a fraction of the flat board's width.
@@ -345,6 +333,7 @@ function Turntable({ level, placements, shapes, cell }: Props) {
 
   const spin = useRef(new Animated.Value(0)).current;
   const fuse = useRef(new Animated.Value(0)).current;
+  const flare = useRef(new Animated.Value(0)).current;
   const still = useReduceMotion();
   /** the board as it was laid out is only needed until the seams have closed */
   const [seamed, setSeamed] = useState(true);
@@ -361,6 +350,20 @@ function Turntable({ level, placements, shapes, cell }: Props) {
     });
     return () => closing.stop();
   }, [fuse, still]);
+
+  useEffect(() => {
+    // the device has asked for less movement, and a flash is the most movement
+    // there is: the solid simply arrives
+    if (still) return;
+    const light = Animated.timing(flare, {
+      toValue: 1,
+      duration: FLARE_MS,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    });
+    light.start();
+    return () => light.stop();
+  }, [flare, still]);
 
   useEffect(() => {
     if (still) {
@@ -459,28 +462,16 @@ function Turntable({ level, placements, shapes, cell }: Props) {
         rightDark: over(curve.rightLit.map((v) => 1 - v)),
       },
       /**
-       * How square a face's upright corners are, per side.
-       *
-       * A corner of the face is only a corner of the *object* while the side
-       * behind it is shut. Once that side opens, the face's upright edge is not
-       * the outline any more — it is a fold in the middle of the material, with
-       * the wall carrying on from it — and a fold that has been rounded off is a
-       * notch bitten out of the join, which is what it looks like: two flat
-       * shapes not quite meeting. So the rounding is filled back in as the side
-       * opens, and the outline's corner becomes the wall's own outer one.
-       *
-       * It rides on how far the side has opened rather than on whether it is
-       * showing, because that is zero at both ends of its half of the turn and
-       * so goes on and off without a step in it.
+       * How far apart the steps in the outline still stand, 0 to 1 — how much a
+       * step is still worth lighting as an edge of its own.
        */
-      corner: (side: Side) =>
-        over(
-          curve.stops.map((at, i) =>
-            (side === 'left' ? at < 0.5 : at > 0.5)
-              ? Math.min(1, curve.wallOpen[i] * SQUARING)
-              : 0,
-          ),
+      opening: over(
+        curve.squash.map(
+          (v) =>
+            1 -
+            Math.max(0, Math.min(1, (SPREAD.whole - Math.abs(v)) / (SPREAD.whole - SPREAD.flat))),
         ),
+      ),
       /**
        * How far the steps in the outline have closed up, 0 to 1 — and so how far
        * the corners at those steps have to be filled back in.
@@ -577,51 +568,6 @@ function Turntable({ level, placements, shapes, cell }: Props) {
         <Animated.View style={[fill, { backgroundColor: '#FFFFFF', opacity: move.shine.face }]} />
       </View>
     ));
-
-  /**
-   * The rounded-off upright corners of the surface, filled back in square.
-   *
-   * Drawn behind the surface, so each one shows only through the corner it
-   * belongs to and nothing of it anywhere else. Flat colour rather than grained:
-   * it is a corner's worth of material, and matching the grain would mean laying
-   * the tile out in the solid's frame a second time for every corner of it.
-   */
-  const squared = (
-    side: Side,
-    base: (slab: Slab) => string,
-    dim: Animated.AnimatedInterpolation<number>,
-  ) =>
-    slabs.flatMap((slab) => {
-      // where the corners are, and what the roll would have left on each of them
-      const at: Array<[number, number, number]> = [];
-      const right = (slab.col + slab.span) * cell - roll;
-      const foot = (slab.row + 1) * cell - roll;
-      const near = side === 'left' ? slab.col * cell : right;
-      const round = slab.round;
-      const top = side === 'left' ? round.borderTopLeftRadius : round.borderTopRightRadius;
-      const under = side === 'left' ? round.borderBottomLeftRadius : round.borderBottomRightRadius;
-      if (top) at.push([near, slab.row * cell, CREST_CORNER]);
-      if (under) at.push([near, foot, FOOT_CORNER]);
-      return at.map(([left, up, edge], i) => (
-        <View
-          key={`${slab.row}:${slab.col}:${i}`}
-          style={{
-            position: 'absolute',
-            left,
-            top: up,
-            width: roll,
-            height: roll,
-            backgroundColor: tone(base(slab), edge),
-          }}
-        >
-          {/* it is a piece of the surface, so it takes the light the surface
-              takes — from inside itself, or it would be part see-through and the
-              background would come through the corner it is there to fill */}
-          <Animated.View style={[fill, { backgroundColor: '#000000', opacity: dim }]} />
-          <Animated.View style={[fill, { backgroundColor: '#FFFFFF', opacity: move.shine.face }]} />
-        </View>
-      ));
-    });
 
   /**
    * One length of the outline, as the stack of bands its roll is drawn in.
@@ -735,13 +681,6 @@ function Turntable({ level, placements, shapes, cell }: Props) {
         },
       ]}
     >
-      {/* the upright corners, squared off again as the side behind them opens —
-          under the surface, so all that shows of them is the corners themselves */}
-      {(['left', 'right'] as const).map((side) => (
-        <Animated.View key={side} style={[box, { opacity: move.corner(side) }]}>
-          {squared(side, paint, front ? move.shade.front : move.shade.back)}
-        </Animated.View>
-      ))}
       {surface(paint, front ? move.shade.front : move.shade.back)}
 
       {/* The edges dim with the face, which the wash over the top of them used to
@@ -818,6 +757,11 @@ function Turntable({ level, placements, shapes, cell }: Props) {
         }}
       />
     ));
+
+  /** whatever this is, only while the steps in the outline are still open */
+  const stepped = (what: React.ReactNode) => (
+    <Animated.View style={[fill, { opacity: move.opening }]}>{what}</Animated.View>
+  );
 
   /**
    * The walls down one side of the outline, in the order they have to be
@@ -986,16 +930,25 @@ function Turntable({ level, placements, shapes, cell }: Props) {
                       highlight stops dead at the join — which is the two of them
                       reading as separate pieces however exactly they line up.
 
-                      Only at the solid's own ends, for the same reason they are
-                      only rounded there: at a step partway down, the sides slide
-                      in behind one another as the solid comes edge-on, and a lit
-                      edge on each would be a ladder of bright rungs across the
-                      bar that edge-on ought to be.
+                      A step partway down gets the same, because a step is an
+                      edge of the object like any other, and lighting the face's
+                      half of it and not the side's is what makes the two of them
+                      read as separate pieces meeting rather than one shape. But
+                      only for as long as the step is open: the sides slide in
+                      behind one another as the solid comes edge-on, and lit edges
+                      left on all of them would be a ladder of bright rungs across
+                      the bar that edge-on ought to be. A step's roll fades out
+                      exactly as its corner fills in — the same reckoning, so the
+                      two never disagree (see SPREAD).
 
                       Inside the run, so it is cut by the run's own rounded corner
                       and has no edge of its own to draw (see HAIR). */}
-                  {rows.has(start - 1) ? null : ridge('top')}
-                  {rows.has(start + span) ? null : ridge('bottom')}
+                  {rows.has(start - 1)
+                    ? edges.get(start)?.top && stepped(ridge('top'))
+                    : ridge('top')}
+                  {rows.has(start + span)
+                    ? edges.get(start + span - 1)?.bottom && stepped(ridge('bottom'))
+                    : ridge('bottom')}
                   {/* the light on the side, inside the run for the same reason
                       the face's is inside its own piece (see HAIR) */}
                   <Animated.View
@@ -1021,6 +974,33 @@ function Turntable({ level, placements, shapes, cell }: Props) {
 
   return (
     <View style={box} pointerEvents="none">
+      {/* The light of the thing becoming one, thrown out from behind it.
+          The solid's own shape, cast as a blur and nothing else: filled in, the
+          part of it that swells past the edges is a grey copy of the object with
+          edges of its own, which reads as a second shape rather than as light. */}
+      <Animated.View
+        style={[
+          box,
+          {
+            opacity: flare.interpolate({ inputRange: [0, 0.16, 1], outputRange: [0, FLARE, 0] }),
+            transform: [
+              { scale: flare.interpolate({ inputRange: [0, 1], outputRange: [0.94, 1.18] }) },
+            ],
+          },
+        ]}
+      >
+        {slabs.map((slab) => (
+          <View
+            key={cellKey(slab.row, slab.col)}
+            style={{
+              ...bed(slab),
+              ...slab.round,
+              boxShadow: `0px 0px ${Math.round(cell * FLARE_REACH)}px #FFFFFF`,
+            }}
+          />
+        ))}
+      </Animated.View>
+
       {/* what the solid throws behind itself, once it is solid enough to throw one */}
       <Animated.View
         style={[
