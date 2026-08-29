@@ -30,9 +30,14 @@ or scan the QR code with Expo Go on a phone. `npm run ios` / `npm run android` /
 
 ## Playing
 
-Pick a board from the level list. The first one explains the game — three steps
-over the board, gone the moment you pick a piece up — and nothing after it needs
-to. Then:
+Pick a board from the level list. The first one explains the game by writing on
+itself: a dashed arrow curving up out of the tray under *Drag a piece onto the
+board*, then, once one is down, the same arrow turned back towards the tray under
+*Tap a piece to send it back*, and finally the rule of the game with an arrow up
+at the hint clock. Each mark is answered by doing the thing, and doing it is what
+moves the lesson on, so nobody is told something they have already worked out.
+Nothing is dismissed and nothing blocks the board — the marks take no touches, so
+the board is playable straight through them. Then:
 
 - **Drag** a piece from the tray onto the board. While you drag, a pale outline
   shows exactly where it will land; the piece rides above your finger so you can
@@ -92,6 +97,11 @@ Levels are ordered by a difficulty score: how many piece placements a solver has
 to try before it has proved the board has exactly one solution. It is measured,
 not guessed, and the labels are cut from it — so a level's difficulty follows from
 the puzzle rather than from where it sits in the list.
+
+The opening handful are ordered by hand. They all score the same, so the score has
+nothing to say about which of them comes first, and the first board is the one
+that has to teach the game: it wants a silhouette that reads at a glance and
+pieces whose homes are obvious. That is the boat.
 
 The two packs are labelled with different words — Warm-up · Easy · Medium · Hard ·
 Expert for the drawn boards, Steady · Tricky · Thorny · Punishing · Relentless for
@@ -172,8 +182,11 @@ piece counts, tray layout, menu thumbnails and level order are all derived.
 | [src/GameScreen.tsx](src/GameScreen.tsx) | board, tray, and the drag gestures |
 | [src/SettingsScreen.tsx](src/SettingsScreen.tsx) | progress summary and resetting it |
 | [src/Blocks.tsx](src/Blocks.tsx) | how a group of squares is drawn |
+| [src/Arrow.tsx](src/Arrow.tsx) | the curved dashed arrow the first board draws on itself |
 | [scripts/generate-levels.mjs](scripts/generate-levels.mjs) | writes the generated pack |
 | [scripts/make-sound.mjs](scripts/make-sound.mjs) | synthesises the finish chime |
+| [scripts/make-icon.mjs](scripts/make-icon.mjs) | draws the app icons out of the game's own blocks |
+| [scripts/png.mjs](scripts/png.mjs) | writes a PNG, for the two assets that are drawn by code |
 | [scripts/verify-levels.mjs](scripts/verify-levels.mjs) | proves every level has one perfect solution |
 | [scripts/test-placement.mjs](scripts/test-placement.mjs) | checks the drop/snap rules |
 
@@ -294,4 +307,17 @@ reviewable as code rather than an opaque binary:
 
 ```bash
 npm run make-sound
+```
+
+So are the icons. The app icon is the game — three squares inlaid into a four
+square board, the fourth left as an empty socket — drawn with the same arithmetic
+the pieces are drawn with on screen and coloured out of `theme.ts`, so the thing
+on the home screen is made of the same blocks as the thing behind it. One run
+writes all five: the square icon, the three layers of the Android adaptive icon
+(foreground, background, and the white stencil a themed launcher tints), and the
+favicon. The adaptive layers keep their art inside the 66% of the canvas Android
+promises not to crop, which is checked rather than eyeballed:
+
+```bash
+npm run make-icon
 ```

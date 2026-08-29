@@ -22,41 +22,14 @@ import type { LevelDef } from './levels';
  * `nodes` is the difficulty score: how many piece placements a solver has to try
  * before the board is proven to have exactly one solution. Levels are ordered by
  * it, and the Warm-up/Easy/.../Expert labels are cut from it.
+ *
+ * The opening handful are ordered by hand instead. They all score the same, so
+ * the score has nothing to say about which comes first, and the first board is
+ * the one that teaches the game: it wants a silhouette that reads instantly and
+ * pieces whose homes are obvious. Do not sort these back into id or score order
+ * — there is nothing in the data that would put them back.
  */
 export const HANDMADE: LevelDef[] = [
-  {
-    id: 'banana',
-    name: 'Banana',
-    nodes: 3,
-    board: [
-      '##.....',
-      '###....',
-      '.###...',
-      '..####.',
-      '...####',
-      '....##.',
-    ],
-    pieces: [
-      ['##.', '###', '.#.'],
-      ['##..', '####'],
-      ['####', '.##.'],
-    ],
-  },
-  {
-    id: 'bench',
-    name: 'Bench',
-    nodes: 3,
-    board: [
-      '#######',
-      '#######',
-      '#.#.#.#',
-    ],
-    pieces: [
-      ['###', '##.', '#..'],
-      ['.###', '##..', '#...'],
-      ['..#', '###', '#.#'],
-    ],
-  },
   {
     id: 'boat',
     name: 'Boat',
@@ -75,6 +48,21 @@ export const HANDMADE: LevelDef[] = [
     ],
   },
   {
+    id: 'bench',
+    name: 'Bench',
+    nodes: 3,
+    board: [
+      '#######',
+      '#######',
+      '#.#.#.#',
+    ],
+    pieces: [
+      ['###', '##.', '#..'],
+      ['.###', '##..', '#...'],
+      ['..#', '###', '#.#'],
+    ],
+  },
+  {
     id: 'compass',
     name: 'Compass',
     nodes: 3,
@@ -90,6 +78,24 @@ export const HANDMADE: LevelDef[] = [
       ['..#.', '.###', '##..'],
       ['###', '.##', '.#.'],
       ['###', '.##', '..#'],
+    ],
+  },
+  {
+    id: 'banana',
+    name: 'Banana',
+    nodes: 3,
+    board: [
+      '##.....',
+      '###....',
+      '.###...',
+      '..####.',
+      '...####',
+      '....##.',
+    ],
+    pieces: [
+      ['##.', '###', '.#.'],
+      ['##..', '####'],
+      ['####', '.##.'],
     ],
   },
   {

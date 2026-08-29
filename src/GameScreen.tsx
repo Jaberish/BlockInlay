@@ -12,8 +12,10 @@ import {
   View,
   useWindowDimensions,
   type PanResponderInstance,
+  type ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Arrow from './Arrow';
 import Blocks, { type Shape } from './Blocks';
 import { cellKey, type Cell, type Level, type Piece } from './levels';
 import {
@@ -34,6 +36,25 @@ import { useAudioPlayer } from 'expo-audio';
 type Point = { x: number; y: number };
 type Source = 'tray' | 'board';
 
+/**
+ * A mark that fades itself in when it appears.
+ *
+ * Its own component so that remounting it — which is what a changed `key` does —
+ * is what plays the fade. The lesson's beats swap that way, and this is the
+ * whole of the animation they need.
+ */
+function Fade({ children, style }: { children: React.ReactNode; style?: ViewStyle }) {
+  const at = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(at, { toValue: 1, duration: 260, useNativeDriver: true }).start();
+  }, [at]);
+  return (
+    <Animated.View style={[style, { opacity: at }]} pointerEvents="none">
+      {children}
+    </Animated.View>
+  );
+}
+
 /** carry the piece above the finger so a thumb doesn't hide it */
 const LIFT_CELLS = Platform.OS === 'web' ? 0 : 0.9;
 /** a press that never really moves counts as a tap, which sends a piece home */
@@ -45,18 +66,20 @@ const FLASH_STEPS = [0.55, 0.12, 0.5, 0];
 const FLASH_MS = 210;
 
 /**
- * What the first board says before anyone has touched it.
+ * What the first board teaches, and when.
  *
- * Nothing else in the app explains the game, and it does not need to: the second
- * board onwards is the same three moves. So the lesson lives on level one, in
- * the order a player meets it — how a piece gets on the board, how it comes off,
- * and what finishing means — and leaves the moment they pick a piece up.
+ * Written on the screen rather than in a card over it. A card has to be read and
+ * dismissed before the game can be touched, which puts a door in front of the
+ * first board; this points at the thing it is talking about while the board is
+ * still there to be played. Each beat is answered by the player doing it, and
+ * the doing is what moves the lesson on — so nobody is ever told something they
+ * have already worked out.
  */
-const LESSON = [
-  'Drag a piece from the tray onto the board. A pale outline shows where it will land.',
-  'Tap a piece you have placed to send it back to the tray.',
-  'Fill every square. Pieces never rotate, and there is exactly one way they all fit.',
-];
+const LESSON = {
+  drag: { line: 'Drag a piece onto the board', sub: 'the goal is to complete the shape' },
+  tap: { line: 'Tap a piece to send it back', sub: 'or drag it somewhere else' },
+  rule: { line: 'Fill every square', sub: 'pieces never turn, and there is exactly one fit' },
+} as const;
 
 type Props = {
   level: Level;
@@ -126,8 +149,11 @@ export default function GameScreen({
   const [flash, setFlash] = useState<{ pieceId: string; step: number } | null>(null);
   /** shown when the hint button is tapped with an empty bank */
   const [hintNote, setHintNote] = useState<string | null>(null);
-  /** the how-to-play card: the first board only, and only until it is understood */
-  const [lesson, setLesson] = useState(() => level.index === 0 && !alreadySolved);
+  /**
+   * Whether this board is the one that teaches the game. Latched at mount beside
+   * `replaying`, for the same reason: it must not change under the player.
+   */
+  const [teaching] = useState(() => level.index === 0 && !alreadySolved);
 
   const tray = useMemo(() => trayLayout(level, width, height), [height, level, width]);
 
@@ -462,28 +488,6 @@ export default function GameScreen({
     return () => clearTimeout(timer);
   }, [flash]);
 
-  const lessonFade = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    if (!lesson) return;
-    Animated.timing(lessonFade, { toValue: 1, duration: 220, useNativeDriver: true }).start();
-  }, [lesson, lessonFade]);
-
-  // The card goes whatever the animation reports back. One left mounted at zero
-  // opacity is an invisible sheet over the board, and a board that cannot be
-  // touched is worse than a lesson that overstays.
-  const dismissLesson = useCallback(() => {
-    Animated.timing(lessonFade, { toValue: 0, duration: 200, useNativeDriver: true }).start(() =>
-      setLesson(false),
-    );
-  }, [lessonFade]);
-
-  // Picking a piece up is the lesson being acted on, so it gets out of the way
-  // without being dismissed — the card sits over the board, and the first thing
-  // it asks for is a piece dropped on the board.
-  useEffect(() => {
-    if (lesson && dragId) dismissLesson();
-  }, [dismissLesson, dragId, lesson]);
-
   const noteFade = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (!hintNote) return;
@@ -497,6 +501,19 @@ export default function GameScreen({
     });
     return () => show.stop();
   }, [hintNote, noteFade]);
+
+  /**
+   * The beat the lesson is on, read off the board instead of counted.
+   *
+   * Derived rather than stepped so it cannot fall out of step with what is
+   * actually there: sending the only piece back asks for it to be dragged over
+   * again, which is exactly what a player who did that needs to see.
+   *
+   * It goes quiet during a drag — the mark sits over the board, and the board is
+   * where they are looking — and for good once the board is finished.
+   */
+  const placed = level.pieces.reduce((n, piece) => n + (placements[piece.id] ? 1 : 0), 0);
+  const beat = !teaching || solved || dragId ? null : placed === 0 ? 'drag' : placed === 1 ? 'tap' : 'rule';
 
   const gap = Math.max(1, Math.round(cell * 0.05));
   const radius = Math.max(2, Math.round(cell * 0.2));
@@ -638,31 +655,29 @@ export default function GameScreen({
           )}
         </View>
 
-        {lesson ? (
-          <Animated.View style={[styles.lessonWrap, { opacity: lessonFade }]} pointerEvents="box-none">
-            <View style={styles.lessonCard}>
-              <Text style={styles.lessonTitle}>How to play</Text>
-              {LESSON.map((line, i) => (
-                <View key={line} style={styles.lessonStep}>
-                  <View style={styles.lessonNumber}>
-                    <Text style={styles.lessonNumberText}>{i + 1}</Text>
-                  </View>
-                  <Text style={styles.lessonText}>{line}</Text>
-                </View>
-              ))}
-              <Text style={styles.lessonFoot}>
-                Stuck? The clock at the top drops one piece into its true home.
-              </Text>
-              <Pressable
-                onPress={dismissLesson}
-                accessibilityRole="button"
-                accessibilityLabel="Got it — start playing"
-                style={({ pressed }) => [styles.lessonButton, pressed && styles.pressed]}
-              >
-                <Text style={styles.lessonButtonText}>Got it</Text>
-              </Pressable>
-            </View>
-          </Animated.View>
+        {/* Keyed by beat, so each one fades itself in: the lesson answering a
+            move should read as a reply rather than as a flicker. The arrow above
+            the words points up at the board, the one below points back down at
+            the tray, and the beat that is only a rule has neither. */}
+        {beat ? (
+          <Fade key={beat} style={styles.lessonMark}>
+            {beat === 'drag' ? (
+              <Arrow radius={42} from={95} to={178} color={theme.accent} thickness={3.5} />
+            ) : null}
+            <Text style={styles.lessonLine}>{LESSON[beat].line}</Text>
+            <Text style={styles.lessonSub}>{LESSON[beat].sub}</Text>
+            {beat === 'tap' ? (
+              <Arrow radius={42} from={270} to={355} color={theme.accent} thickness={3.5} />
+            ) : null}
+          </Fade>
+        ) : null}
+
+        {/* the one control on the screen that does not explain itself */}
+        {beat === 'rule' ? (
+          <Fade style={styles.lessonClock}>
+            <Text style={styles.lessonSub}>a hint drops one piece in</Text>
+            <Arrow radius={26} from={88} to={4} color={theme.accent} thickness={3} dashes={5} />
+          </Fade>
         ) : null}
       </View>
 
@@ -909,82 +924,55 @@ const makeStyles = (theme: Theme) =>
       fontSize: 11.5,
       fontWeight: '800',
     },
-    // the lesson covers the board rather than sitting above it: there is no
-    // spare height on a small phone, and a card that took some would shrink
-    // every board on every screen for the sake of one card on level one
-    lessonWrap: {
+    /**
+     * The lesson is drawn over the board, at the bottom of it — the gap above
+     * the tray, where a piece is about to be dragged from. Absolute, so nothing
+     * about the lesson takes height from the board: a card that took some would
+     * shrink every board on every screen for the sake of one board's first
+     * minute. It never takes a touch either, so the board underneath is playable
+     * through it — which is the point of writing on the screen rather than over
+     * the top of it.
+     */
+    lessonMark: {
       position: 'absolute',
       left: 0,
       right: 0,
+      bottom: 2,
+      alignItems: 'center',
+      gap: 2,
+    },
+    lessonClock: {
+      position: 'absolute',
       top: 0,
-      bottom: 0,
-      alignItems: 'center',
-      justifyContent: 'center',
-      // enough to hold the card off the board without hiding it: the tray below
-      // is uncovered, so the first step has something to point at
-      backgroundColor: 'rgba(0,0,0,0.3)',
-      borderRadius: 22,
+      /**
+       * Lined up with the clock rather than centred under it by eye. The header
+       * puts the reset button 18px in from the padding and the clock 18px past
+       * that, so the clock's middle is 78px from this layer's right edge; the
+       * arrow's tip sits about 7px inside its own box, and the box is what
+       * `flex-end` pins here. Anything wider than the arrow — the words — hangs
+       * off to the left, which is the only direction with room for it.
+       */
+      right: 71,
+      alignItems: 'flex-end',
+      gap: 2,
     },
-    lessonCard: {
-      maxWidth: 340,
-      borderRadius: 20,
-      paddingHorizontal: 18,
-      paddingTop: 16,
-      paddingBottom: 14,
-      backgroundColor: theme.panel,
-      borderWidth: 1.5,
-      borderColor: theme.panelEdgeHot,
-      boxShadow: '0px 10px 24px rgba(0,0,0,0.45)',
-    },
-    lessonTitle: {
+    lessonLine: {
       color: theme.text,
-      fontSize: 19,
-      fontWeight: '800',
-      marginBottom: 12,
-    },
-    lessonStep: {
-      flexDirection: 'row',
-      alignItems: 'flex-start',
-      gap: 10,
-      marginBottom: 10,
-    },
-    lessonNumber: {
-      width: 21,
-      height: 21,
-      borderRadius: 999,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: theme.accent,
-    },
-    lessonNumberText: {
-      color: theme.accentInk,
-      fontSize: 12,
-      fontWeight: '800',
-    },
-    lessonText: {
-      flex: 1,
-      color: theme.text,
-      fontSize: 14,
-      lineHeight: 20,
-    },
-    lessonFoot: {
-      color: theme.textDim,
-      fontSize: 12.5,
-      lineHeight: 18,
-      marginTop: 2,
-    },
-    lessonButton: {
-      alignSelf: 'stretch',
-      marginTop: 14,
-      paddingVertical: 13,
-      borderRadius: 14,
-      backgroundColor: theme.accent,
-      alignItems: 'center',
-    },
-    lessonButtonText: {
-      color: theme.accentInk,
       fontSize: 16,
       fontWeight: '800',
+      letterSpacing: 0.2,
+      // the marks lie over the board, whose sockets are a lighter grey than the
+      // background: without this the words fade out exactly where they cross one
+      textShadowColor: 'rgba(0,0,0,0.85)',
+      textShadowOffset: { width: 0, height: 1 },
+      textShadowRadius: 6,
+    },
+    lessonSub: {
+      color: theme.textDim,
+      fontSize: 12.5,
+      textShadowColor: 'rgba(0,0,0,0.85)',
+      textShadowOffset: { width: 0, height: 1 },
+      textShadowRadius: 6,
     },
     hintNote: {
       position: 'absolute',

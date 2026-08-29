@@ -20,14 +20,15 @@
   },
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "web": "expo start --web",
     "test": "node --no-warnings --import ./scripts/register-ts.mjs scripts/test-placement.mjs",
     "verify-levels": "node --no-warnings --import ./scripts/register-ts.mjs scripts/verify-levels.mjs",
     "generate-levels": "node scripts/generate-levels.mjs --count 4800 --pool 70 --ramp-floor 18 --exclude scripts/drawn-silhouettes.json --out src/generated.ts",
     "make-sound": "node scripts/make-sound.mjs",
-    "make-grain": "node scripts/make-grain.mjs"
+    "make-grain": "node scripts/make-grain.mjs",
+    "make-icon": "node --no-warnings --import ./scripts/register-ts.mjs scripts/make-icon.mjs"
   },
   "private": true
 }

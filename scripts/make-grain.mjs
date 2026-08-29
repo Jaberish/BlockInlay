@@ -16,8 +16,7 @@
  *
  * Run with:  npm run make-grain
  */
-import { deflateSync } from 'node:zlib';
-import { writeFileSync } from 'node:fs';
+import { writePng } from './png.mjs';
 
 /** the tile, in pixels — big enough that the repeat is not a texture in itself */
 const SIDE = 64;
@@ -33,11 +32,11 @@ const wobble = (n) => {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 };
 
-// greyscale plus alpha: two bytes a pixel, and a row of them behind a filter byte
-const raw = Buffer.alloc(SIDE * (SIDE * 2 + 1));
+// greyscale plus alpha: two bytes a pixel, row after row — the encoder is what
+// puts a filter byte in front of each row
+const raw = Buffer.alloc(SIDE * SIDE * 2);
 let at = 0;
 for (let y = 0; y < SIDE; y++) {
-  raw[at++] = 0; // filter: none
   for (let x = 0; x < SIDE; x++) {
     const n = y * 8191 + x * 131;
     // black or white, so the two sides of the average are equally represented
@@ -48,40 +47,11 @@ for (let y = 0; y < SIDE; y++) {
   }
 }
 
-const crcTable = Array.from({ length: 256 }, (_, n) => {
-  let c = n;
-  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-  return c >>> 0;
+// grey plus alpha: colour type 4, which is what the two bytes a pixel above are
+const bytes = writePng(new URL('../assets/grain.png', import.meta.url), {
+  width: SIDE,
+  height: SIDE,
+  colorType: 4,
+  pixels: raw,
 });
-const crc = (buf) => {
-  let c = 0xffffffff;
-  for (const byte of buf) c = crcTable[(c ^ byte) & 0xff] ^ (c >>> 8);
-  return (c ^ 0xffffffff) >>> 0;
-};
-
-const chunk = (kind, body) => {
-  const head = Buffer.alloc(8);
-  head.writeUInt32BE(body.length, 0);
-  head.write(kind, 4, 'ascii');
-  const tail = Buffer.alloc(4);
-  tail.writeUInt32BE(crc(Buffer.concat([head.subarray(4), body])), 0);
-  return Buffer.concat([head, body, tail]);
-};
-
-const header = Buffer.alloc(13);
-header.writeUInt32BE(SIDE, 0);
-header.writeUInt32BE(SIDE, 4);
-header[8] = 8; // bits per channel
-header[9] = 4; // grey + alpha
-// the remaining three are compression, filter and interlace, all the only
-// method there is
-
-const png = Buffer.concat([
-  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-  chunk('IHDR', header),
-  chunk('IDAT', deflateSync(raw, { level: 9 })),
-  chunk('IEND', Buffer.alloc(0)),
-]);
-
-writeFileSync(new URL('../assets/grain.png', import.meta.url), png);
-console.log(`assets/grain.png — ${SIDE}x${SIDE}, ${(png.length / 1024).toFixed(1)}kB`);
+console.log(`assets/grain.png — ${SIDE}x${SIDE}, ${(bytes / 1024).toFixed(1)}kB`);
