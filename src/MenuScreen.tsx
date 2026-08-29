@@ -17,6 +17,7 @@ import {
   heightOf,
   itemAtOffset,
   scrubOffset,
+  worthScrubbing,
   GRID_GAP,
   ROW_HEIGHT,
   SECTION_HEIGHT,
@@ -39,6 +40,10 @@ type Props = {
   loaded: boolean;
   /** the level the list should open on, or -1 to open at the very top */
   landAt: number;
+  /** how many boards from the start can be opened; the rest are shown face down */
+  open: number;
+  /** how many boards the list holds at all */
+  shown: number;
   onPick: (levelId: string) => void;
   onOpenSettings: () => void;
   /** the chapter the player is up to — the menu wears its colours */
@@ -86,6 +91,8 @@ export default function MenuScreen({
   solved,
   loaded,
   landAt,
+  open,
+  shown,
   onPick,
   onOpenSettings,
   theme,
@@ -99,7 +106,10 @@ export default function MenuScreen({
   const tileWidth = Math.floor(
     (width - PADDING * 2 - SCRUBBER_WIDTH - GRID_GAP * (columns - 1)) / columns,
   );
-  const { items, itemOfLevel, offsets, height } = useMemo(() => buildMenu(columns), [columns]);
+  const { items, itemOfLevel, offsets, height } = useMemo(
+    () => buildMenu(columns, shown),
+    [columns, shown],
+  );
 
   const [listHeight, setListHeight] = useState(0);
   const [scrubbing, setScrubbing] = useState(false);
@@ -113,6 +123,8 @@ export default function MenuScreen({
     listHeight > 0 ? (listHeight * listHeight) / height : MIN_THUMB,
   );
   const travel = Math.max(1, listHeight - thumbHeight);
+  /** a list that fits on the screen has nowhere to be flown to */
+  const scrubbable = worthScrubbing(height, listHeight);
 
   const thumbY = scrollY.interpolate({
     inputRange: [0, maxScroll],
@@ -168,7 +180,7 @@ export default function MenuScreen({
   const land = useCallback(() => {
     if (landedFor.current === columns || landAt < 0) return;
     const item = itemOfLevel[landAt];
-    if (item === undefined) return;
+    if (item === undefined || item < 0) return;
     landedFor.current = columns;
     list.current?.scrollToOffset({ offset: offsets[item], animated: false });
   }, [columns, itemOfLevel, landAt, offsets]);
@@ -200,6 +212,29 @@ export default function MenuScreen({
       return (
         <View style={[styles.row, { gap: GRID_GAP, height: ROW_HEIGHT }]}>
           {item.levels.map((index) => {
+            // a locked tile never builds its level: the board it holds is the
+            // one thing it is not saying
+            if (index >= open) {
+              return (
+                <View
+                  key={`locked:${index}`}
+                  accessible
+                  accessibilityLabel={`Level ${index + 1}, locked`}
+                  style={[styles.tile, styles.tileLocked, { width: tileWidth, height: TILE_HEIGHT }]}
+                >
+                  <View style={styles.tileTop}>
+                    <Text style={styles.number}>{index + 1}</Text>
+                  </View>
+                  <View style={[thumbBox, { height: THUMB_HEIGHT }]}>
+                    <Text style={styles.lockedMark}>?</Text>
+                  </View>
+                  <Text style={styles.name}>Locked</Text>
+                  <Text style={styles.meta} numberOfLines={1}>
+                    Unlocks as you solve
+                  </Text>
+                </View>
+              );
+            }
             const level = getLevel(index);
             const isSolved = solved.has(level.id);
             return (
@@ -235,7 +270,7 @@ export default function MenuScreen({
         </View>
       );
     },
-    [onPick, solved, styles, tileWidth],
+    [onPick, open, solved, styles, tileWidth],
   );
 
   return (
@@ -286,18 +321,20 @@ export default function MenuScreen({
           />
         ) : null}
 
-        <View style={styles.scrubber} {...scrubber.panHandlers}>
-          <View style={styles.scrubberTrack} />
-          <Animated.View
-            style={[
-              styles.scrubberThumb,
-              scrubbing && styles.scrubberThumbHeld,
-              { height: thumbHeight, transform: [{ translateY: thumbY }] },
-            ]}
-          />
-        </View>
+        {scrubbable ? (
+          <View style={styles.scrubber} {...scrubber.panHandlers}>
+            <View style={styles.scrubberTrack} />
+            <Animated.View
+              style={[
+                styles.scrubberThumb,
+                scrubbing && styles.scrubberThumbHeld,
+                { height: thumbHeight, transform: [{ translateY: thumbY }] },
+              ]}
+            />
+          </View>
+        ) : null}
 
-        {scrubbing ? (
+        {scrubbing && scrubbable ? (
           <Animated.View style={[styles.scrubBubble, { transform: [{ translateY: thumbY }] }]}>
             <Text style={styles.scrubBubbleText}>{scrubLabel}</Text>
           </Animated.View>
@@ -437,6 +474,17 @@ const makeStyles = (theme: Theme) =>
     },
     tileSolved: {
       borderColor: theme.panelEdgeHot,
+    },
+    tileLocked: {
+      // no panel fill: a board that is not there yet should not sit as solidly
+      // on the page as the ones that are
+      backgroundColor: 'transparent',
+    },
+    lockedMark: {
+      color: theme.textDim,
+      fontSize: 40,
+      fontWeight: '800',
+      opacity: 0.45,
     },
     tilePressed: {
       opacity: 0.7,

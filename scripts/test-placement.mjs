@@ -3,7 +3,8 @@
  *   npm test
  */
 import { LEVEL_COUNT, getLevel, cellKey, levelById, idAt, indexOfId, sectionAt } from '../src/levels.ts';
-import { buildMenu, heightOf, itemAtOffset, scrubOffset } from '../src/menuLayout.ts';
+import { buildMenu, heightOf, itemAtOffset, scrubOffset, worthScrubbing, ROW_HEIGHT } from '../src/menuLayout.ts';
+import { TEASERS, openCount, shownCount } from '../src/unlock.ts';
 import { settle, spend, refillProgress, FULL_BANK, MAX_HINTS, REFILL_MS } from '../src/hintBank.ts';
 import { nextHint, solveLevel } from '../src/solve.ts';
 import { boardCell, trayLayout, CHROME, ROOT_PADDING } from '../src/gameLayout.ts';
@@ -204,6 +205,85 @@ for (const columns of [2, 3]) {
       return i >= 0 && i < items.length && offsets[i] <= y;
     }),
   );
+}
+
+// ---- how much of the list a player is shown --------------------------------
+// This gate decides what can be reached at all, so an off-by-one is not a
+// cosmetic fault: it is the board they were about to play, missing.
+
+check('before anything is solved, exactly the first board is open', openCount(-1) === 1);
+
+check(
+  'finishing a board opens the next one, and nothing past it',
+  Array.from({ length: 30 }, (_, i) => i).every((furthest) => openCount(furthest) === furthest + 2),
+);
+
+check(
+  'the locked teasers sit after the open boards',
+  shownCount(-1) === 1 + TEASERS && shownCount(7) === 9 + TEASERS,
+);
+
+check(
+  'neither count runs off the end of the pack',
+  openCount(LEVEL_COUNT - 1) === LEVEL_COUNT &&
+    shownCount(LEVEL_COUNT - 1) === LEVEL_COUNT &&
+    shownCount(LEVEL_COUNT - 3) === LEVEL_COUNT,
+);
+
+// the scrollbar goes with it: a gated list usually fits on the screen, and a
+// thumb filling its whole track says there is somewhere to go when there is not
+check(
+  'a list that fits on the screen has no scrollbar',
+  !worthScrubbing(500, 715) && !worthScrubbing(715, 715) && !worthScrubbing(715 + ROW_HEIGHT, 715),
+);
+check(
+  'a list longer than the screen keeps one',
+  worthScrubbing(715 + ROW_HEIGHT + 1, 715) && worthScrubbing(90000, 715),
+);
+check(
+  'a list nothing has measured yet keeps one',
+  worthScrubbing(500, 0) && worthScrubbing(90000, 0),
+);
+
+// and the list built from it: a short list is the common case, not the odd one
+for (const shown of [1, 3, 5, 26, 203, LEVEL_COUNT]) {
+  for (const columns of [2, 3]) {
+    const { items, itemOfLevel, offsets, height } = buildMenu(columns, shown);
+    const listed = items.filter((i) => i.kind === 'row').flatMap((i) => i.levels);
+
+    check(
+      `a list of ${shown} at ${columns} columns holds exactly those boards, in order`,
+      listed.length === shown && listed.every((index, i) => index === i),
+      `${listed.length} tiles`,
+    );
+
+    check(
+      `a list of ${shown} at ${columns} columns counts each section over what it shows`,
+      items.every((item, i) => {
+        if (item.kind !== 'section') return true;
+        let n = 0;
+        for (let j = i + 1; j < items.length && items[j].kind === 'row'; j++) n += items[j].levels.length;
+        return n === item.count;
+      }),
+    );
+
+    check(
+      `a list of ${shown} at ${columns} columns has no item for the boards it withholds`,
+      Array.from({ length: LEVEL_COUNT }).every((_, index) =>
+        index < shown ? itemOfLevel[index] >= 0 : itemOfLevel[index] === -1,
+      ),
+    );
+
+    let running = 0;
+    check(
+      `a list of ${shown} at ${columns} columns still stacks its offsets`,
+      items.every((item, i) => {
+        const ok = offsets[i] === running;
+        running += heightOf(item);
+        return ok;
+      }) && running === height,
+    );
+  }
 }
 
 // ---- level identity -------------------------------------------------------

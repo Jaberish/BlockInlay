@@ -25,7 +25,7 @@ export type Item = Row | Section;
 
 export type MenuLayout = {
   items: Item[];
-  /** which item each level sits in, so a jump can scroll straight to it */
+  /** which item each level sits in, or -1 for a level the list does not hold */
   itemOfLevel: Int32Array;
   /** distance from the top of the list to each item */
   offsets: Float64Array;
@@ -34,20 +34,27 @@ export type MenuLayout = {
 
 export const heightOf = (item: Item) => (item.kind === 'section' ? SECTION_HEIGHT : ROW_HEIGHT);
 
-/** how many levels each section holds, counted once rather than once per section */
-const SECTION_SIZES = (() => {
+/**
+ * The list, chopped into section headings and rows of `columns` tiles.
+ *
+ * `shown` is how many levels from the start it holds — the list stops where the
+ * player's progress does, so it is nearly always far shorter than the pack. The
+ * section counts are counted over that same stretch rather than over the whole
+ * pack: a heading saying 200 above three tiles describes a list nobody is
+ * looking at.
+ */
+export const buildMenu = (columns: number, shown: number = LEVEL_COUNT): MenuLayout => {
+  const count = Math.max(0, Math.min(LEVEL_COUNT, Math.floor(shown)));
   const sizes = new Map<string, number>();
-  for (let i = 0; i < LEVEL_COUNT; i++) {
+  for (let i = 0; i < count; i++) {
     const key = sectionAt(i);
     sizes.set(key, (sizes.get(key) ?? 0) + 1);
   }
-  return sizes;
-})();
 
-/** the whole list, chopped into section headings and rows of `columns` tiles */
-export const buildMenu = (columns: number): MenuLayout => {
   const items: Item[] = [];
-  const itemOfLevel = new Int32Array(LEVEL_COUNT);
+  // -1 rather than 0: an unlisted level has no item, and a zero would send a
+  // jump to the top of the list as though it had found one
+  const itemOfLevel = new Int32Array(LEVEL_COUNT).fill(-1);
   let section: string | null = null;
   let bucket: number[] = [];
 
@@ -58,7 +65,7 @@ export const buildMenu = (columns: number): MenuLayout => {
     bucket = [];
   };
 
-  for (let index = 0; index < LEVEL_COUNT; index++) {
+  for (let index = 0; index < count; index++) {
     const next = sectionAt(index);
     if (next !== section) {
       flushRow();
@@ -67,7 +74,7 @@ export const buildMenu = (columns: number): MenuLayout => {
         kind: 'section',
         key: `s${section}`,
         label: section,
-        count: SECTION_SIZES.get(section) ?? 0,
+        count: sizes.get(section) ?? 0,
       });
     }
     // A row never spans two chapters. Each tile draws its board in its own
@@ -91,6 +98,21 @@ export const buildMenu = (columns: number): MenuLayout => {
   }
   return { items, itemOfLevel, offsets, height: y };
 };
+
+/**
+ * Whether the strip down the right edge is worth showing.
+ *
+ * Early on the list is a handful of tiles that fit on the screen, and a thumb
+ * filling its whole track is a control saying there is somewhere to go when
+ * there is not. A list that does not overflow by at least a row keeps its space
+ * instead.
+ *
+ * `viewHeight` is 0 until a layout has been reported, and an unmeasured list
+ * keeps the scrollbar: losing a control to a measurement that has not arrived
+ * yet is the worse of the two ways to be wrong here.
+ */
+export const worthScrubbing = (contentHeight: number, viewHeight: number) =>
+  viewHeight <= 0 || contentHeight > viewHeight + ROW_HEIGHT;
 
 /** the item showing at a given scroll offset — a binary search over the offsets */
 export const itemAtOffset = (offsets: Float64Array, offset: number) => {

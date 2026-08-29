@@ -7,6 +7,8 @@ import GameScreen from './src/GameScreen';
 import MenuScreen from './src/MenuScreen';
 import SettingsScreen from './src/SettingsScreen';
 import { LEVEL_COUNT, getLevel, idAt, indexOfId, levelById } from './src/levels';
+import { openCount, shownCount } from './src/unlock';
+import { SHOW_EVERY_LEVEL } from './src/debug';
 import { useProgress } from './src/progress';
 import { useSettings } from './src/settings';
 import { useHints } from './src/hints';
@@ -45,6 +47,15 @@ export default function App() {
   const dressAs = lastPlayed >= 0 ? lastPlayed : Math.min(furthestSolved + 1, LEVEL_COUNT - 1);
   const menuTheme = useMemo(() => themeAt(dressAs), [dressAs]);
 
+  /**
+   * How much of the list the player has earned: everything they have solved, the
+   * board after it, and two more face down. `?debug` on the web build opens all
+   * five thousand, which is the only way to look at the far end of the list
+   * without playing there.
+   */
+  const open = SHOW_EVERY_LEVEL ? LEVEL_COUNT : openCount(furthestSolved);
+  const shown = SHOW_EVERY_LEVEL ? LEVEL_COUNT : shownCount(furthestSolved);
+
   const toMenu = useCallback(() => setRoute({ name: 'menu' }), []);
   const openLevel = useCallback((levelId: string) => {
     setRoute({ name: 'game', levelId });
@@ -81,6 +92,7 @@ export default function App() {
             hints={hints}
             hintProgress={hintProgress}
             onUseHint={useHint}
+            alreadySolved={solved.has(level.id)}
             soundOn={soundOn}
             onDuckMusic={music.duck}
           />
@@ -100,6 +112,8 @@ export default function App() {
             solved={solved}
             loaded={loaded}
             landAt={landAt}
+            open={open}
+            shown={shown}
             onPick={openLevel}
             onOpenSettings={openSettings}
             theme={menuTheme}

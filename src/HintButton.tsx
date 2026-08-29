@@ -13,6 +13,12 @@ type Props = {
   hints: number;
   /** 0..1 through the current hour; 1 when the bank is full */
   progress: number;
+  /**
+   * Hints on this board cost nothing, so the bank is not what is on offer: the
+   * clock reads full and the count reads ∞ rather than showing a number that
+   * will not go down.
+   */
+  free?: boolean;
   disabled?: boolean;
   onPress: () => void;
   theme: Theme;
@@ -25,11 +31,11 @@ type Props = {
  * two-rotated-halves trick, and neither earns its keep for something that moves
  * once every five minutes. Twelve ticks say "an hour" more plainly anyway.
  */
-export default function HintButton({ hints, progress, disabled, onPress, theme }: Props) {
+export default function HintButton({ hints, progress, free, disabled, onPress, theme }: Props) {
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  const full = hints >= MAX_HINTS;
+  const full = free || hints >= MAX_HINTS;
   const lit = full ? TICKS : Math.floor(progress * TICKS);
-  const empty = hints <= 0;
+  const empty = !free && hints <= 0;
   const minutesLeft = Math.max(1, Math.ceil((1 - progress) * 60));
 
   return (
@@ -40,9 +46,11 @@ export default function HintButton({ hints, progress, disabled, onPress, theme }
       accessibilityRole="button"
       accessibilityState={{ disabled }}
       accessibilityLabel={
-        empty
-          ? `No hints left, one more in about ${minutesLeft} minutes`
-          : `Use a hint, ${hints} left`
+        free
+          ? 'Use a hint, free on a board you have already solved'
+          : empty
+            ? `No hints left, one more in about ${minutesLeft} minutes`
+            : `Use a hint, ${hints} left`
       }
       style={({ pressed }) => [styles.button, pressed && !disabled && styles.pressed]}
     >
@@ -61,7 +69,9 @@ export default function HintButton({ hints, progress, disabled, onPress, theme }
           ]}
         />
       ))}
-      <Text style={[styles.count, (empty || disabled) && styles.countSpent]}>{hints}</Text>
+      <Text style={[styles.count, (empty || disabled) && styles.countSpent]}>
+        {free ? '∞' : hints}
+      </Text>
     </Pressable>
   );
 }

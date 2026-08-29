@@ -30,7 +30,9 @@ or scan the QR code with Expo Go on a phone. `npm run ios` / `npm run android` /
 
 ## Playing
 
-Pick a board from the level list. Then:
+Pick a board from the level list. The first one explains the game — three steps
+over the board, gone the moment you pick a piece up — and nothing after it needs
+to. Then:
 
 - **Drag** a piece from the tray onto the board. While you drag, a pale outline
   shows exactly where it will land; the piece rides above your finger so you can
@@ -39,7 +41,10 @@ Pick a board from the level list. Then:
 - **Tap** a placed piece to send it straight home.
 - **Hint** (the clock button) drops one piece into its true home, moving anything
   in the way back to the tray. You hold three; one comes back every hour, and the
-  ring around the button shows how far along that hour is.
+  ring around the button shows how far along that hour is. On a board you have
+  already finished the hints are free and unlimited — it says so beside the
+  clock, which reads ∞ — because the bank is there to make hints cost something
+  on a board that still counts.
 - **Reset** (the ↻ button) starts the board over; the back arrow returns to the
   level list. **Continue** appears when the board is finished.
 
@@ -50,8 +55,16 @@ under it for a moment so it can actually be heard. Both can be switched off in
 Settings. Solved boards are ticked in the level list and kept on the device, so
 they survive closing the app. The list opens beside the board you are on — the
 last one you opened, or, before you have opened any, wherever your progress left
-you — rather than back at level one, and the bar down the right edge can be
-dragged to fly through five thousand of them.
+you — rather than back at level one, and once it is longer than the screen the
+bar down the right edge can be dragged to fly through it.
+
+The list holds what you have played, the board you are on, and two more with
+their faces down. Five thousand boards is not an invitation but a wall, and a
+list that opened on every one of them would say "here is everything you have not
+done" rather than "here is the next one". The two locked tiles are what say the
+list keeps going. On the web build, `?debug` in the address bar opens all five
+thousand — it is how the far end of the list gets looked at without playing
+there, and the one platform where a switch can be flicked without a build.
 
 **Settings** (the gear in the level list) switches the music and the sound effects
 off, and can clear your progress — behind a confirmation, since it can't be undone.
@@ -122,8 +135,9 @@ plain, slow, `Set`-of-strings solver rather than sharing the generator's bitmask
 one: it is the independent check on the generator, so it does not share its code.
 The rules of dropping and snapping have their own checks, run against all 5,000
 boards, alongside the parts that can be wrong without ever throwing: the level
-list's arithmetic, whether every board still fits on a small phone, the hint
-refill, and the id round-trip that saved progress depends on.
+list's arithmetic, how much of that list is unlocked, whether every board still
+fits on a small phone, the hint refill, and the id round-trip that saved progress
+depends on.
 
 ```bash
 npm test
@@ -148,6 +162,8 @@ piece counts, tray layout, menu thumbnails and level order are all derived.
 | [src/settings.ts](src/settings.ts) | preferences, kept on the device |
 | [src/music.ts](src/music.ts) | the looping background track, and ducking it for the chime |
 | [src/menuLayout.ts](src/menuLayout.ts) | where every tile, heading and scrollbar drag lands |
+| [src/unlock.ts](src/unlock.ts) | how much of the list a player has earned |
+| [src/debug.ts](src/debug.ts) | the `?debug` switch that opens all of it on the web |
 | [src/gameLayout.ts](src/gameLayout.ts) | sizing a board and its tray to the screen |
 | [src/HintButton.tsx](src/HintButton.tsx) | the hint count and its refill clock |
 | [src/placement.ts](src/placement.ts) | pure rules: what fits where, what a drop snaps to |

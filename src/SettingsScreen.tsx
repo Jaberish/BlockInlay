@@ -63,14 +63,8 @@ export default function SettingsScreen({
 
         <Text style={styles.section}>ABOUT</Text>
         <View style={styles.card}>
-          <Text style={styles.cardText}>
-            Every board holds exactly as many squares as its pieces cover, and there is only one
-            arrangement that fills it. Pieces never rotate, so each one has a single home.
-          </Text>
-          <Text style={[styles.cardText, styles.aboutSpacer]}>
-            Hints reveal one piece in its true home. You hold up to three, and one comes back every
-            hour.
-          </Text>
+          <Text style={styles.cardTitle}>Block Inlay</Text>
+          <Text style={[styles.cardText, styles.aboutSpacer]}>Created by HutStacks.</Text>
         </View>
         <Text style={styles.section}>SOUND</Text>
         <View style={styles.card}>
@@ -197,7 +191,7 @@ const makeStyles = (theme: Theme) =>
       alignSelf: 'flex-end',
     },
     aboutSpacer: {
-      marginTop: 10,
+      marginTop: 4,
     },
     root: {
       flex: 1,

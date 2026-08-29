@@ -44,6 +44,19 @@ const TAP_MS = 350;
 const FLASH_STEPS = [0.55, 0.12, 0.5, 0];
 const FLASH_MS = 210;
 
+/**
+ * What the first board says before anyone has touched it.
+ *
+ * Nothing else in the app explains the game, and it does not need to: the second
+ * board onwards is the same three moves. So the lesson lives on level one, in
+ * the order a player meets it — how a piece gets on the board, how it comes off,
+ * and what finishing means — and leaves the moment they pick a piece up.
+ */
+const LESSON = [
+  'Drag a piece from the tray onto the board. A pale outline shows where it will land.',
+  'Tap a piece you have placed to send it back to the tray.',
+  'Fill every square. Pieces never rotate, and there is exactly one way they all fit.',
+];
 
 type Props = {
   level: Level;
@@ -54,6 +67,8 @@ type Props = {
   hints: number;
   hintProgress: number;
   onUseHint: () => boolean;
+  /** whether this board had already been finished before this visit */
+  alreadySolved: boolean;
   soundOn: boolean;
   /** pull the music down so the finish chime can be heard over it */
   onDuckMusic: () => void;
@@ -67,6 +82,7 @@ export default function GameScreen({
   hints,
   hintProgress,
   onUseHint,
+  alreadySolved,
   soundOn,
   onDuckMusic,
 }: Props) {
@@ -94,6 +110,15 @@ export default function GameScreen({
     return dressed;
   }, [level.pieces, theme]);
 
+  /**
+   * Whether they had already finished this board when they opened it.
+   *
+   * Latched at mount rather than read from the prop each render: solving the
+   * board now would otherwise flip it mid-visit, and it decides what hints cost.
+   * The screen is keyed by level, so every board gets a fresh answer.
+   */
+  const [replaying] = useState(() => alreadySolved);
+
   const [placements, setPlacements] = useState<Placements>(() => emptyBoard(level));
   const [dragId, setDragId] = useState<string | null>(null);
   const [preview, setPreview] = useState<Cell | null>(null);
@@ -101,6 +126,8 @@ export default function GameScreen({
   const [flash, setFlash] = useState<{ pieceId: string; step: number } | null>(null);
   /** shown when the hint button is tapped with an empty bank */
   const [hintNote, setHintNote] = useState<string | null>(null);
+  /** the how-to-play card: the first board only, and only until it is understood */
+  const [lesson, setLesson] = useState(() => level.index === 0 && !alreadySolved);
 
   const tray = useMemo(() => trayLayout(level, width, height), [height, level, width]);
 
@@ -340,7 +367,9 @@ export default function GameScreen({
     const current = levelRef.current;
     const hint = nextHint(current, placementsRef.current);
     if (!hint) return;
-    if (!onUseHint()) {
+    // a board they have already finished costs nothing to look at again: the
+    // bank is there to make hints count, and this one no longer does
+    if (!replaying && !onUseHint()) {
       // the bank is empty, so say when it refills rather than doing nothing
       const minutes = Math.max(1, Math.ceil((1 - hintProgress) * 60));
       setHintNote(minutes === 1 ? 'Next hint in a minute' : `Next hint in ${minutes} minutes`);
@@ -365,7 +394,7 @@ export default function GameScreen({
       next[piece.id] = hint.at;
       return next;
     });
-  }, [hintProgress, onUseHint]);
+  }, [hintProgress, onUseHint, replaying]);
 
   const celebrate = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -433,6 +462,28 @@ export default function GameScreen({
     return () => clearTimeout(timer);
   }, [flash]);
 
+  const lessonFade = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!lesson) return;
+    Animated.timing(lessonFade, { toValue: 1, duration: 220, useNativeDriver: true }).start();
+  }, [lesson, lessonFade]);
+
+  // The card goes whatever the animation reports back. One left mounted at zero
+  // opacity is an invisible sheet over the board, and a board that cannot be
+  // touched is worse than a lesson that overstays.
+  const dismissLesson = useCallback(() => {
+    Animated.timing(lessonFade, { toValue: 0, duration: 200, useNativeDriver: true }).start(() =>
+      setLesson(false),
+    );
+  }, [lessonFade]);
+
+  // Picking a piece up is the lesson being acted on, so it gets out of the way
+  // without being dismissed — the card sits over the board, and the first thing
+  // it asks for is a piece dropped on the board.
+  useEffect(() => {
+    if (lesson && dragId) dismissLesson();
+  }, [dismissLesson, dragId, lesson]);
+
   const noteFade = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (!hintNote) return;
@@ -473,9 +524,15 @@ export default function GameScreen({
           </Text>
           <Text style={styles.subtitle}>{solved ? 'Solved — a perfect fit.' : level.difficulty}</Text>
         </View>
+        {replaying ? (
+          <View style={styles.solvedTag}>
+            <Text style={styles.solvedTagText}>✓ Solved</Text>
+          </View>
+        ) : null}
         <HintButton
           hints={hints}
           progress={hintProgress}
+          free={replaying}
           disabled={solved}
           onPress={takeHint}
           theme={theme}
@@ -580,6 +637,33 @@ export default function GameScreen({
             </>
           )}
         </View>
+
+        {lesson ? (
+          <Animated.View style={[styles.lessonWrap, { opacity: lessonFade }]} pointerEvents="box-none">
+            <View style={styles.lessonCard}>
+              <Text style={styles.lessonTitle}>How to play</Text>
+              {LESSON.map((line, i) => (
+                <View key={line} style={styles.lessonStep}>
+                  <View style={styles.lessonNumber}>
+                    <Text style={styles.lessonNumberText}>{i + 1}</Text>
+                  </View>
+                  <Text style={styles.lessonText}>{line}</Text>
+                </View>
+              ))}
+              <Text style={styles.lessonFoot}>
+                Stuck? The clock at the top drops one piece into its true home.
+              </Text>
+              <Pressable
+                onPress={dismissLesson}
+                accessibilityRole="button"
+                accessibilityLabel="Got it — start playing"
+                style={({ pressed }) => [styles.lessonButton, pressed && styles.pressed]}
+              >
+                <Text style={styles.lessonButtonText}>Got it</Text>
+              </Pressable>
+            </View>
+          </Animated.View>
+        ) : null}
       </View>
 
       <View style={[styles.tray, goingHome && styles.trayHot]}>
@@ -811,6 +895,96 @@ const makeStyles = (theme: Theme) =>
       right: 0,
       bottom: 0,
       pointerEvents: 'none',
+    },
+    solvedTag: {
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 999,
+      backgroundColor: theme.panel,
+      borderWidth: 1.5,
+      borderColor: theme.panelEdgeHot,
+    },
+    solvedTagText: {
+      color: theme.accent,
+      fontSize: 11.5,
+      fontWeight: '800',
+    },
+    // the lesson covers the board rather than sitting above it: there is no
+    // spare height on a small phone, and a card that took some would shrink
+    // every board on every screen for the sake of one card on level one
+    lessonWrap: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      top: 0,
+      bottom: 0,
+      alignItems: 'center',
+      justifyContent: 'center',
+      // enough to hold the card off the board without hiding it: the tray below
+      // is uncovered, so the first step has something to point at
+      backgroundColor: 'rgba(0,0,0,0.3)',
+      borderRadius: 22,
+    },
+    lessonCard: {
+      maxWidth: 340,
+      borderRadius: 20,
+      paddingHorizontal: 18,
+      paddingTop: 16,
+      paddingBottom: 14,
+      backgroundColor: theme.panel,
+      borderWidth: 1.5,
+      borderColor: theme.panelEdgeHot,
+      boxShadow: '0px 10px 24px rgba(0,0,0,0.45)',
+    },
+    lessonTitle: {
+      color: theme.text,
+      fontSize: 19,
+      fontWeight: '800',
+      marginBottom: 12,
+    },
+    lessonStep: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 10,
+      marginBottom: 10,
+    },
+    lessonNumber: {
+      width: 21,
+      height: 21,
+      borderRadius: 999,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.accent,
+    },
+    lessonNumberText: {
+      color: theme.accentInk,
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    lessonText: {
+      flex: 1,
+      color: theme.text,
+      fontSize: 14,
+      lineHeight: 20,
+    },
+    lessonFoot: {
+      color: theme.textDim,
+      fontSize: 12.5,
+      lineHeight: 18,
+      marginTop: 2,
+    },
+    lessonButton: {
+      alignSelf: 'stretch',
+      marginTop: 14,
+      paddingVertical: 13,
+      borderRadius: 14,
+      backgroundColor: theme.accent,
+      alignItems: 'center',
+    },
+    lessonButtonText: {
+      color: theme.accentInk,
+      fontSize: 16,
+      fontWeight: '800',
     },
     hintNote: {
       position: 'absolute',
