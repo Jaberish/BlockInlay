@@ -3,6 +3,7 @@ import {
   Animated,
   AppState,
   BackHandler,
+  Easing,
   PanResponder,
   Platform,
   Pressable,
@@ -13,7 +14,7 @@ import {
   type PanResponderInstance,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Blocks from './Blocks';
+import Blocks, { type Shape } from './Blocks';
 import { cellKey, type Cell, type Level, type Piece } from './levels';
 import {
   boardCell,
@@ -26,7 +27,7 @@ import {
 import { emptyBoard, isSolved, snapToBoard, type Placements } from './placement';
 import { nextHint } from './solve';
 import HintButton from './HintButton';
-import { theme } from './theme';
+import { themeAt, type Theme } from './theme';
 import { useAudioPlayer } from 'expo-audio';
 
 type Point = { x: number; y: number };
@@ -70,6 +71,27 @@ export default function GameScreen({
 }: Props) {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+
+  /** the chapter this level belongs to decides what the whole screen looks like */
+  const theme = useMemo(() => themeAt(level.index), [level.index]);
+  const styles = useMemo(() => makeStyles(theme), [theme]);
+
+  /**
+   * Pieces are dressed here rather than in the level. A level is built once and
+   * kept for the rest of the session, so a colour stored on the piece would be
+   * whichever chapter's colour happened to be current the first time the level
+   * was opened — wrong for every chapter after that.
+   */
+  const shapes = useMemo(() => {
+    const dressed: Record<string, Shape> = {};
+    for (const piece of level.pieces) {
+      dressed[piece.id] = {
+        cells: piece.cells,
+        ...theme.palette[piece.slot % theme.palette.length],
+      };
+    }
+    return dressed;
+  }, [level.pieces, theme]);
 
   const [placements, setPlacements] = useState<Placements>(() => emptyBoard(level));
   const [dragId, setDragId] = useState<string | null>(null);
@@ -359,21 +381,39 @@ export default function GameScreen({
    * that was already there.
    */
   const titlePop = useRef(new Animated.Value(0)).current;
+  const burst = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (!solved) {
       titlePop.setValue(0);
+      burst.setValue(0);
       return;
     }
-    Animated.sequence([
-      Animated.delay(110),
-      Animated.spring(titlePop, {
-        toValue: 1,
-        friction: 5,
-        tension: 90,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, [solved, titlePop]);
+    // a loose spring, so it flies well past its size and rocks back rather than
+    // easing in — the overshoot is the point, and the ring going out behind it
+    // is what makes the whole thing land as an event
+    const show = Animated.parallel([
+      Animated.sequence([
+        Animated.delay(90),
+        Animated.spring(titlePop, {
+          toValue: 1,
+          friction: 3.4,
+          tension: 150,
+          useNativeDriver: true,
+        }),
+      ]),
+      Animated.sequence([
+        Animated.delay(90),
+        Animated.timing(burst, {
+          toValue: 1,
+          duration: 620,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]),
+    ]);
+    show.start();
+    return () => show.stop();
+  }, [burst, solved, titlePop]);
 
   /**
    * Two quick pulses of white over the piece a hint just placed.
@@ -437,6 +477,7 @@ export default function GameScreen({
           progress={hintProgress}
           disabled={solved}
           onPress={takeHint}
+          theme={theme}
         />
         <Pressable
           onPress={reset}
@@ -513,7 +554,11 @@ export default function GameScreen({
                   opacity: piece.id === dragId ? 0 : 1,
                 }}
               >
-                <Blocks shape={piece} cell={cell} handlers={responderFor(piece, 'board').panHandlers} />
+                <Blocks
+                  shape={shapes[piece.id]}
+                  cell={cell}
+                  handlers={responderFor(piece, 'board').panHandlers}
+                />
                 {flash?.pieceId === piece.id ? (
                   <View style={[styles.hintFlash, { opacity: FLASH_STEPS[flash.step] }]}>
                     <Blocks
@@ -541,30 +586,55 @@ export default function GameScreen({
               },
             ]}
           >
-            <Animated.Text
-              style={[
-                styles.bannerTitle,
-                {
-                  opacity: titlePop.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [0, 1],
-                    extrapolate: 'clamp',
-                  }),
-                  transform: [
-                    { scale: titlePop.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] }) },
-                    {
-                      translateY: titlePop.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [10, 0],
-                        extrapolate: 'clamp',
-                      }),
-                    },
-                  ],
-                },
-              ]}
-            >
-              Perfect fit
-            </Animated.Text>
+            <View style={styles.titleWrap}>
+              <Animated.View
+                style={[
+                  styles.burst,
+                  {
+                    opacity: burst.interpolate({
+                      inputRange: [0, 0.15, 1],
+                      outputRange: [0, 0.55, 0],
+                    }),
+                    transform: [
+                      { scale: burst.interpolate({ inputRange: [0, 1], outputRange: [0.55, 1.9] }) },
+                    ],
+                  },
+                ]}
+                pointerEvents="none"
+              />
+              <Animated.Text
+                style={[
+                  styles.bannerTitle,
+                  {
+                    // up to full brightness in the first third of the swing, so
+                    // the overshoot happens in view rather than behind a fade
+                    opacity: titlePop.interpolate({
+                      inputRange: [0, 0.35, 1],
+                      outputRange: [0, 1, 1],
+                      extrapolate: 'clamp',
+                    }),
+                    transform: [
+                      { scale: titlePop.interpolate({ inputRange: [0, 1], outputRange: [0.2, 1] }) },
+                      {
+                        rotate: titlePop.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: ['-16deg', '0deg'],
+                        }),
+                      },
+                      {
+                        translateY: titlePop.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [30, 0],
+                          extrapolate: 'clamp',
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+              >
+                Perfect fit
+              </Animated.Text>
+            </View>
             <Pressable
               onPress={onNext ?? onBack}
               accessibilityRole="button"
@@ -588,9 +658,10 @@ export default function GameScreen({
                   {...responderFor(piece, 'tray').panHandlers}
                 >
                   <Blocks
-                    shape={piece}
+                    shape={shapes[piece.id]}
                     cell={tray.cell}
                     faded={placements[piece.id] != null || piece.id === dragId}
+                    ghost={theme.ghost}
                   />
                 </View>
               </View>
@@ -611,165 +682,182 @@ export default function GameScreen({
             transform: pan.getTranslateTransform(),
           }}
         >
-          <Blocks shape={dragPiece} cell={cell} lifted />
+          <Blocks shape={shapes[dragPiece.id]} cell={cell} lifted />
         </Animated.View>
       ) : null}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: theme.bg,
-    paddingHorizontal: ROOT_PADDING,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingBottom: 4,
-  },
-  headerText: {
-    flex: 1,
-  },
-  title: {
-    color: theme.text,
-    fontSize: 21,
-    fontWeight: '700',
-    letterSpacing: 0.2,
-  },
-  subtitle: {
-    color: theme.textDim,
-    fontSize: 13,
-    marginTop: 2,
-  },
-  iconButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: theme.panel,
-    borderWidth: 1,
-    borderColor: theme.panelEdge,
-  },
-  iconText: {
-    color: theme.text,
-    fontSize: 26,
-    lineHeight: 30,
-    fontWeight: '600',
-  },
-  pressed: {
-    opacity: 0.65,
-  },
-  reset: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: 'center',
-    justifyContent: 'center',
-    // set apart from the hint clock, so neither gets pressed by mistake
-    marginLeft: 8,
-    backgroundColor: theme.panel,
-    borderWidth: 1,
-    borderColor: theme.panelEdge,
-  },
-  resetIcon: {
-    color: theme.text,
-    fontSize: 20,
-    lineHeight: 24,
-    fontWeight: '700',
-  },
-  boardArea: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  socket: {
-    position: 'absolute',
-    backgroundColor: theme.socket,
-    borderWidth: 1,
-    borderColor: theme.socketEdge,
-  },
-  preview: {
-    position: 'absolute',
-    backgroundColor: theme.preview,
-    borderWidth: 1.5,
-    borderColor: theme.previewEdge,
-  },
-  tray: {
-    borderRadius: 22,
-    backgroundColor: theme.panel,
-    borderWidth: 1.5,
-    borderColor: theme.panelEdge,
-    paddingVertical: 12,
-    paddingHorizontal: TRAY_PADDING,
-    justifyContent: 'center',
-  },
-  trayHot: {
-    borderColor: theme.panelEdgeHot,
-  },
-  trayRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  slot: {
-    marginHorizontal: SLOT_MARGIN_X,
-    marginVertical: SLOT_MARGIN_Y,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  hintFlash: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    right: 0,
-    bottom: 0,
-    pointerEvents: 'none',
-  },
-  hintNote: {
-    position: 'absolute',
-    top: 54,
-    right: ROOT_PADDING,
-    zIndex: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: theme.panel,
-    borderWidth: 1.5,
-    borderColor: theme.panelEdgeHot,
-  },
-  hintNoteText: {
-    color: theme.accent,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  banner: {
-    alignSelf: 'stretch',
-    alignItems: 'center',
-    paddingVertical: 4,
-  },
-  bannerTitle: {
-    color: theme.accent,
-    fontSize: 26,
-    fontWeight: '800',
-    letterSpacing: 0.3,
-  },
-  primaryButton: {
-    alignSelf: 'stretch',
-    marginTop: 16,
-    paddingVertical: 20,
-    borderRadius: 18,
-    backgroundColor: theme.accent,
-    alignItems: 'center',
-  },
-  primaryButtonText: {
-    color: '#2A0A14',
-    fontSize: 19,
-    fontWeight: '800',
-    letterSpacing: 0.2,
-  },
-});
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
+    root: {
+      flex: 1,
+      // transparent: the drifting shapes behind the app show through
+      backgroundColor: 'transparent',
+      paddingHorizontal: ROOT_PADDING,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingBottom: 4,
+    },
+    headerText: {
+      flex: 1,
+    },
+    title: {
+      color: theme.text,
+      fontSize: 21,
+      fontWeight: '700',
+      letterSpacing: 0.2,
+    },
+    subtitle: {
+      color: theme.textDim,
+      fontSize: 13,
+      marginTop: 2,
+    },
+    iconButton: {
+      width: 38,
+      height: 38,
+      borderRadius: 19,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.panel,
+      borderWidth: 1,
+      borderColor: theme.panelEdge,
+    },
+    iconText: {
+      color: theme.text,
+      fontSize: 26,
+      lineHeight: 30,
+      fontWeight: '600',
+    },
+    pressed: {
+      opacity: 0.65,
+    },
+    reset: {
+      width: 38,
+      height: 38,
+      borderRadius: 19,
+      alignItems: 'center',
+      justifyContent: 'center',
+      // set apart from the hint clock, so neither gets pressed by mistake
+      marginLeft: 8,
+      backgroundColor: theme.panel,
+      borderWidth: 1,
+      borderColor: theme.panelEdge,
+    },
+    resetIcon: {
+      color: theme.text,
+      fontSize: 20,
+      lineHeight: 24,
+      fontWeight: '700',
+    },
+    boardArea: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    socket: {
+      position: 'absolute',
+      backgroundColor: theme.socket,
+      borderWidth: 1,
+      borderColor: theme.socketEdge,
+    },
+    preview: {
+      position: 'absolute',
+      backgroundColor: theme.preview,
+      borderWidth: 1.5,
+      borderColor: theme.previewEdge,
+    },
+    tray: {
+      borderRadius: 22,
+      backgroundColor: theme.panel,
+      borderWidth: 1.5,
+      borderColor: theme.panelEdge,
+      paddingVertical: 12,
+      paddingHorizontal: TRAY_PADDING,
+      justifyContent: 'center',
+    },
+    trayHot: {
+      borderColor: theme.panelEdgeHot,
+    },
+    trayRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    slot: {
+      marginHorizontal: SLOT_MARGIN_X,
+      marginVertical: SLOT_MARGIN_Y,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    hintFlash: {
+      position: 'absolute',
+      left: 0,
+      top: 0,
+      right: 0,
+      bottom: 0,
+      pointerEvents: 'none',
+    },
+    hintNote: {
+      position: 'absolute',
+      top: 54,
+      right: ROOT_PADDING,
+      zIndex: 10,
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderRadius: 999,
+      backgroundColor: theme.panel,
+      borderWidth: 1.5,
+      borderColor: theme.panelEdgeHot,
+    },
+    hintNoteText: {
+      color: theme.accent,
+      fontSize: 13,
+      fontWeight: '700',
+    },
+    banner: {
+      alignSelf: 'stretch',
+      alignItems: 'center',
+      paddingVertical: 4,
+    },
+    titleWrap: {
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    burst: {
+      position: 'absolute',
+      left: -34,
+      right: -34,
+      top: -16,
+      bottom: -16,
+      borderRadius: 999,
+      borderWidth: 2,
+      borderColor: theme.accent,
+      backgroundColor: theme.accentSoft,
+    },
+    bannerTitle: {
+      color: theme.accent,
+      fontSize: 26,
+      fontWeight: '800',
+      letterSpacing: 0.3,
+    },
+    primaryButton: {
+      alignSelf: 'stretch',
+      marginTop: 16,
+      paddingVertical: 20,
+      borderRadius: 18,
+      backgroundColor: theme.accent,
+      alignItems: 'center',
+    },
+    primaryButtonText: {
+      color: theme.accentInk,
+      fontSize: 19,
+      fontWeight: '800',
+      letterSpacing: 0.2,
+    },
+  });

@@ -8,6 +8,9 @@ import { settle, spend, refillProgress, FULL_BANK, MAX_HINTS, REFILL_MS } from '
 import { nextHint, solveLevel } from '../src/solve.ts';
 import { boardCell, trayLayout, CHROME, ROOT_PADDING } from '../src/gameLayout.ts';
 import { emptyBoard, fitsAt, isSolved, occupiedExcept, snapToBoard } from '../src/placement.ts';
+import { THEMES, chapterAt, themeAt, themeIndexAt, CHAPTER, CHAPTER_SWITCH, LONG_CHAPTER, PIECE_COLOURS } from '../src/theme.ts';
+import { SHAPES, SHELLS, SHELL_ALPHA, coreAlpha, shellScales, wander } from '../src/backdropShapes.ts';
+import { readFile } from 'node:fs/promises';
 
 /** every level, built once; the app builds them lazily but the tests want all of them */
 const EVERY = Array.from({ length: LEVEL_COUNT }, (_, i) => getLevel(i));
@@ -375,6 +378,186 @@ check(
   cramped === undefined,
   cramped ? `${cramped.name} with ${cramped.pieces.length} pieces` : '',
 );
+
+// ---- chapters: the app changes colour as you play -------------------------
+// A theme is what the player actually notices about progress, so the boundaries
+// have to land exactly where they were asked to: every ten levels for the first
+// hundred, every twenty after that, with the original purple on levels 1 to 10.
+
+check(
+  'levels 1 to 10 are the purple the game started in',
+  Array.from({ length: 10 }, (_, i) => themeAt(i)).every((t) => t === THEMES[0]),
+);
+check('level 11 has moved on', themeAt(10) !== THEMES[0], themeAt(10).name);
+
+// where every boundary falls, worked out from the rule rather than from the code
+const wantedChapter = (i) =>
+  i < CHAPTER_SWITCH
+    ? Math.floor(i / CHAPTER)
+    : CHAPTER_SWITCH / CHAPTER + Math.floor((i - CHAPTER_SWITCH) / LONG_CHAPTER);
+
+let wrongChapter = null;
+let shortRun = null;
+let runStart = 0;
+for (let i = 0; i < LEVEL_COUNT; i++) {
+  if (chapterAt(i) !== wantedChapter(i)) wrongChapter ??= `level ${i + 1}`;
+  const boundary = i + 1 === LEVEL_COUNT || chapterAt(i + 1) !== chapterAt(i);
+  if (boundary) {
+    const run = i - runStart + 1;
+    const want = runStart < CHAPTER_SWITCH ? CHAPTER : LONG_CHAPTER;
+    // the last chapter is only as long as the levels that are left
+    if (run !== want && i + 1 !== LEVEL_COUNT) {
+      shortRun ??= `levels ${runStart + 1}-${i + 1} run for ${run}, not ${want}`;
+    }
+    runStart = i + 1;
+  }
+}
+check('every level sits in the chapter the rule puts it in', wrongChapter === null, wrongChapter ?? '');
+check('chapters run for ten levels, then twenty after level 100', shortRun === null, shortRun ?? '');
+
+check('the first hundred levels are ten different themes',
+  new Set(Array.from({ length: 100 }, (_, i) => themeIndexAt(i))).size === 10);
+
+let repeated = null;
+let sameWithin = null;
+for (let i = 1; i < LEVEL_COUNT; i++) {
+  if (chapterAt(i) === chapterAt(i - 1)) {
+    if (themeAt(i) !== themeAt(i - 1)) sameWithin ??= `level ${i + 1}`;
+  } else if (themeAt(i) === themeAt(i - 1)) {
+    repeated ??= `levels ${i} and ${i + 1} are both ${themeAt(i).name}`;
+  }
+}
+check('a chapter looks the same the whole way through', sameWithin === null, sameWithin ?? '');
+check('crossing into a new chapter always changes the colours', repeated === null, repeated ?? '');
+
+// ---- and every theme has to be usable -------------------------------------
+// These are generated from a handful of numbers each, so a bad seed is a whole
+// palette of unreadable pieces. Contrast is checked rather than eyeballed.
+
+const rgbOf = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+const relLum = (hex) =>
+  rgbOf(hex)
+    .map((c) => (c / 255 <= 0.03928 ? c / 255 / 12.92 : ((c / 255 + 0.055) / 1.055) ** 2.4))
+    .reduce((sum, c, i) => sum + c * [0.2126, 0.7152, 0.0722][i], 0);
+const contrast = (a, b) => {
+  const [hi, lo] = [relLum(a), relLum(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+};
+/** how far apart two colours look, in lightness and in both colour axes at once */
+const apart = (a, b) => {
+  const at = (hex) => { const [r, g, bl] = rgbOf(hex); return [0.299 * r + 0.587 * g + 0.114 * bl, r - g, (r + g) / 2 - bl]; };
+  const [p, q] = [at(a), at(b)];
+  return Math.hypot(...p.map((v, i) => v - q[i]));
+};
+const isHex = (v) => typeof v === 'string' && /^#[0-9A-F]{6}$/.test(v);
+
+const faults = [];
+for (const t of THEMES) {
+  const say = (why) => faults.push(`${t.name}: ${why}`);
+  const hexes = [t.bg, t.panel, t.text, t.textDim, t.accent, t.accentInk, t.thumb, t.thumbShade,
+    t.thumbSolved, t.thumbSolvedShade, ...t.palette.flatMap((p) => [p.color, p.shade])];
+  if (!hexes.every(isHex)) say('has a colour that is not a six-digit hex');
+  if (t.palette.length !== PIECE_COLOURS) say(`has ${t.palette.length} piece colours, not ${PIECE_COLOURS}`);
+  if (new Set(t.palette.map((p) => p.color)).size !== t.palette.length) say('repeats a piece colour');
+
+  // a filled block against the background, and text against what it sits on
+  const dimmest = Math.min(...t.palette.map((p) => contrast(p.color, t.bg)));
+  if (dimmest < 3) say(`has a piece only ${dimmest.toFixed(1)}:1 against the background`);
+  if (contrast(t.text, t.bg) < 7) say('has body text too close to the background');
+  if (contrast(t.textDim, t.panel) < 4.5) say('has dim text too close to the panel');
+  if (contrast(t.accent, t.panel) < 3) say('has an accent too close to the panel');
+  if (contrast(t.accentInk, t.accent) < 4.5) say('has unreadable text on its accent button');
+
+  // nine pieces on one board: no two of them may be hard to tell apart
+  let closestEarly = Infinity;
+  for (let i = 0; i < t.palette.length; i++) {
+    for (let j = i + 1; j < t.palette.length; j++) {
+      const gap = apart(t.palette[i].color, t.palette[j].color);
+      if (gap < 40) say(`has two pieces only ${gap.toFixed(0)} apart`);
+      if (j < 3) closestEarly = Math.min(closestEarly, gap);
+    }
+  }
+  // the early boards have three pieces, so those three carry the most weight —
+  // the original purple sets the bar at 110 and nothing should fall under it
+  if (closestEarly < 100) say(`starts with two pieces only ${closestEarly.toFixed(0)} apart`);
+  // and the shaded side has to read as the same block, only darker
+  if (t.palette.some((p) => relLum(p.shade) >= relLum(p.color))) say('has a shade no darker than its face');
+}
+check('every theme is legible', faults.length === 0, faults.slice(0, 4).join('; '));
+check('the themes are all different', new Set(THEMES.map((t) => t.bg)).size === THEMES.length);
+
+// the drifting shapes wear these, so they have to exist and not be the accent again
+const driftFaults = [];
+for (const t of THEMES) {
+  if (t.drift.length !== 3 || !t.drift.every(isHex)) driftFaults.push(`${t.name}: bad drift colours`);
+  if (new Set(t.drift).size !== t.drift.length) driftFaults.push(`${t.name}: repeats a drift colour`);
+  // one of them sits near the accent on purpose, to anchor the drift to the
+  // chapter; what would defeat the point is all three doing so
+  if (t.drift.some((c) => apart(c, t.accent) < 30)) driftFaults.push(`${t.name}: drifts in its own accent`);
+  if (Math.max(...t.drift.map((c) => apart(c, t.accent))) < 100) driftFaults.push(`${t.name}: has no colour but the accent`);
+  // they are laid on at about a tenth, so they have to be bright enough to show at all
+  if (t.drift.some((c) => relLum(c) < relLum(t.bg) * 4)) driftFaults.push(`${t.name}: a drift colour is too dark to show`);
+}
+check('every theme has drift colours of its own', driftFaults.length === 0, driftFaults.slice(0, 3).join('; '));
+
+// ---- the drifting background -----------------------------------------------
+// None of this throws when it is wrong; it just looks wrong, and a background
+// gets to look wrong for weeks before anyone mentions it.
+
+const scales = shellScales();
+check('the shells start at the core and only ever grow',
+  scales.length === SHELLS && scales[0] === 1 && scales.every((v, i) => i === 0 || v > scales[i - 1]),
+  `${scales[0]} .. ${scales[scales.length - 1].toFixed(2)}`);
+// the regression this is here for: at 0.055 a shell the background was a lava lamp
+check('the shapes stay a background rather than a foreground',
+  coreAlpha() > 0.04 && coreAlpha() < 0.16, `core is ${(coreAlpha() * 100).toFixed(1)}% colour`);
+check('no single shell is visible on its own', SHELL_ALPHA < 0.02, `${SHELL_ALPHA}`);
+
+const shapeFaults = [];
+for (const [i, shape] of SHAPES.entries()) {
+  const say = (why) => shapeFaults.push(`shape ${i}: ${why}`);
+  const first = shape.path[0];
+  const last = shape.path[shape.path.length - 1];
+  // the lap restarts from zero, so a path that does not come home would jump
+  if (first[0] !== last[0] || first[1] !== last[1]) say('wanders off and never comes back');
+  if (shape.path.length < 3) say('has no path to speak of');
+  if (!Number.isInteger(shape.spin)) say('turns a fraction of a circle, so it snaps back');
+  if (shape.period < 30) say(`laps in ${shape.period}s, which is not drifting`);
+  if (shape.corners.some((c) => c <= 0 || c > 0.5)) say('has a corner radius that is not a corner');
+  if (shape.tint < 0 || shape.tint >= 3) say('wears a colour the theme does not have');
+
+  // and it has to still be on screen once it has wandered, on any shape of phone
+  for (const [name, aspect] of [['portrait', 390 / 844], ['landscape', 844 / 390], ['tablet', 820 / 1180]]) {
+    for (const [x, y] of wander(shape, aspect)) {
+      if (x < -0.45 || x > 1.45 || y < -0.45 || y > 1.45) say(`drifts off a ${name} screen to (${x.toFixed(2)}, ${y.toFixed(2)})`);
+    }
+  }
+}
+check('every drifting shape loops cleanly and stays in view', shapeFaults.length === 0, shapeFaults.slice(0, 3).join('; '));
+
+// ---- the trap that emptied the top of the level list -----------------------
+// `VirtualizedList` refuses to recompute its window while `initialScrollIndex`
+// is set and the scroll offset is exactly zero — so with that prop the very top
+// of the list, and only the very top, renders as blank spacer. It reads like a
+// harmless optimisation, which is exactly why it wants a guard.
+const menuSource = await readFile(new URL('../src/MenuScreen.tsx', import.meta.url), 'utf8');
+check(
+  'the level list does not use initialScrollIndex',
+  !/^\s*initialScrollIndex[=:]/m.test(menuSource),
+  'it blanks the top of the list; scroll with scrollToOffset instead',
+);
+
+// if the periods shared factors the shapes would visibly fall into step
+const hcf = (a, b) => (b ? hcf(b, a % b) : a);
+let inStep = null;
+for (let i = 0; i < SHAPES.length; i++) {
+  for (let j = i + 1; j < SHAPES.length; j++) {
+    if (hcf(SHAPES[i].period, SHAPES[j].period) !== 1) {
+      inStep ??= `${SHAPES[i].period}s and ${SHAPES[j].period}s share a factor`;
+    }
+  }
+}
+check('the shapes never fall into step with each other', inStep === null, inStep ?? '');
 
 console.log(failures === 0 ? '\nall checks passed' : `\n${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

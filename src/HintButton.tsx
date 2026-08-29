@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { MAX_HINTS } from './hintBank';
-import { theme } from './theme';
+import type { Theme } from './theme';
 
 const SIZE = 44;
 /** twelve ticks round the edge — one per five minutes of the refill hour */
@@ -15,6 +15,7 @@ type Props = {
   progress: number;
   disabled?: boolean;
   onPress: () => void;
+  theme: Theme;
 };
 
 /**
@@ -24,7 +25,8 @@ type Props = {
  * two-rotated-halves trick, and neither earns its keep for something that moves
  * once every five minutes. Twelve ticks say "an hour" more plainly anyway.
  */
-export default function HintButton({ hints, progress, disabled, onPress }: Props) {
+export default function HintButton({ hints, progress, disabled, onPress, theme }: Props) {
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const full = hints >= MAX_HINTS;
   const lit = full ? TICKS : Math.floor(progress * TICKS);
   const empty = hints <= 0;
@@ -64,32 +66,33 @@ export default function HintButton({ hints, progress, disabled, onPress }: Props
   );
 }
 
-const styles = StyleSheet.create({
-  button: {
-    width: SIZE,
-    height: SIZE,
-    borderRadius: SIZE / 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: theme.panel,
-    borderWidth: 1,
-    borderColor: theme.panelEdge,
-  },
-  pressed: {
-    opacity: 0.7,
-  },
-  tick: {
-    position: 'absolute',
-    width: TICK_WIDTH,
-    height: TICK_LENGTH,
-    borderRadius: TICK_WIDTH / 2,
-  },
-  count: {
-    color: theme.accent,
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  countSpent: {
-    color: theme.textDim,
-  },
-});
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
+    button: {
+      width: SIZE,
+      height: SIZE,
+      borderRadius: SIZE / 2,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.panel,
+      borderWidth: 1,
+      borderColor: theme.panelEdge,
+    },
+    pressed: {
+      opacity: 0.7,
+    },
+    tick: {
+      position: 'absolute',
+      width: TICK_WIDTH,
+      height: TICK_LENGTH,
+      borderRadius: TICK_WIDTH / 2,
+    },
+    count: {
+      color: theme.accent,
+      fontSize: 16,
+      fontWeight: '800',
+    },
+    countSpent: {
+      color: theme.textDim,
+    },
+  });

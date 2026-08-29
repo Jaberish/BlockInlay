@@ -32,7 +32,20 @@ import { HANDMADE } from './handmade';
 
 export type Cell = { row: number; col: number };
 
-export type Difficulty = 'Warm-up' | 'Easy' | 'Medium' | 'Hard' | 'Expert';
+/**
+ * The five bands each pack's labels are cut into.
+ *
+ * The two packs use different words on purpose. Both ramp from easy to hard, but
+ * the generated one starts its ramp over at level 201 — so with one shared
+ * vocabulary, finishing two hundred boards and reaching "Hard" would be followed
+ * immediately by "Warm-up", which reads as being sent back to the beginning
+ * rather than as starting a much longer climb. The generated words all describe
+ * a real puzzle; none of them describes a beginner.
+ */
+const DRAWN_LABELS = ['Warm-up', 'Easy', 'Medium', 'Hard', 'Expert'] as const;
+const MADE_LABELS = ['Steady', 'Tricky', 'Thorny', 'Punishing', 'Relentless'] as const;
+
+export type Difficulty = (typeof DRAWN_LABELS)[number] | (typeof MADE_LABELS)[number];
 
 export type LevelDef = {
   id: string;
@@ -43,30 +56,11 @@ export type LevelDef = {
   pieces: string[][];
 };
 
-/** score thresholds, chosen to spread the levels across the five labels */
-const BANDS: Array<[number, Difficulty]> = [
-  [30, 'Warm-up'],
-  [80, 'Easy'],
-  [200, 'Medium'],
-  [500, 'Hard'],
-  [Infinity, 'Expert'],
-];
+/** score thresholds, chosen to spread the levels across the five bands */
+const CEILINGS = [30, 80, 200, 500, Infinity];
 
-export const difficultyOf = (nodes: number): Difficulty =>
-  BANDS.find(([ceiling]) => nodes < ceiling)![1];
-
-/** one hue per piece; levels use as many as they have pieces */
-const PALETTE = [
-  { color: '#FF6E8A', shade: '#C93F5E' },
-  { color: '#FFBA5C', shade: '#C98A2E' },
-  { color: '#B9E05F', shade: '#85AB33' },
-  { color: '#5FD3A0', shade: '#2E9B72' },
-  { color: '#6FA8FF', shade: '#3E72C9' },
-  { color: '#C58BFF', shade: '#8B54C9' },
-  { color: '#FF8F6B', shade: '#C95E3E' },
-  { color: '#4FD8DE', shade: '#2596A8' },
-  { color: '#E77BC7', shade: '#B04896' },
-];
+export const difficultyOf = (nodes: number, drawn: boolean): Difficulty =>
+  (drawn ? DRAWN_LABELS : MADE_LABELS)[CEILINGS.findIndex((ceiling) => nodes < ceiling)];
 
 export type Piece = {
   id: string;
@@ -74,8 +68,13 @@ export type Piece = {
   /** bounding box, in cells */
   rows: number;
   cols: number;
-  color: string;
-  shade: string;
+  /**
+   * Which of the theme's colours this piece wears. The colour itself is not
+   * stored: it depends on the theme the level's chapter is in, and levels are
+   * built once and kept, so a piece that carried a hex code would still be
+   * wearing the palette that happened to be current the first time it was drawn.
+   */
+  slot: number;
 };
 
 export type Level = {
@@ -147,7 +146,7 @@ for (let i = 0; i < GENERATED_LINES.length; i++) {
 }
 
 export const scoreAt = (index: number) => SCORES[index];
-export const difficultyAt = (index: number) => difficultyOf(SCORES[index]);
+export const difficultyAt = (index: number) => difficultyOf(SCORES[index], index < DRAWN_COUNT);
 export const nameAt = (index: number) => (index < DRAWN_COUNT ? HANDMADE[index].name : undefined);
 
 /**
@@ -189,7 +188,7 @@ const build = (index: number): Level => {
   return {
     id: def.id,
     name: index < DRAWN_COUNT ? def.name : undefined,
-    difficulty: difficultyOf(def.nodes),
+    difficulty: difficultyOf(def.nodes, index < DRAWN_COUNT),
     nodes: def.nodes,
     index,
     board: buildBoard(def.board),
@@ -199,7 +198,7 @@ const build = (index: number): Level => {
         id: `${def.id}:${i}`,
         cells,
         ...extent(cells),
-        ...PALETTE[i % PALETTE.length],
+        slot: i,
       };
     }),
   };

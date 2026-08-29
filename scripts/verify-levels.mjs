@@ -12,7 +12,7 @@
  *
  * Run with:  npm run verify-levels
  */
-import { LEVEL_COUNT, getLevel, cellKey, pieceCellCount, difficultyOf } from '../src/levels.ts';
+import { LEVEL_COUNT, DRAWN_COUNT, getLevel, cellKey, pieceCellCount, difficultyOf } from '../src/levels.ts';
 
 /** pieces that look identical are interchangeable, so count board states, not permutations */
 const signature = (piece) => piece.cells.map((c) => cellKey(c.row, c.col)).join('|');
@@ -89,7 +89,7 @@ for (let index = 0; index < LEVEL_COUNT; index++) {
   if (covered !== cells) failures.push(`${label(level)}: pieces cover ${covered} of ${cells} cells`);
   else if (tilings !== 1) failures.push(`${label(level)}: ${tilings === 0 ? 'no solution' : 'more than one solution'}`);
   else if (nodes !== level.nodes) failures.push(`${label(level)}: recorded score ${level.nodes}, search says ${nodes}`);
-  else if (level.difficulty !== difficultyOf(level.nodes)) failures.push(`${label(level)}: label does not match score`);
+  else if (level.difficulty !== difficultyOf(level.nodes, level.index < DRAWN_COUNT)) failures.push(`${label(level)}: label does not match score`);
 
   if (ids.has(level.id)) failures.push(`${label(level)}: duplicate id ${level.id}`);
   ids.add(level.id);

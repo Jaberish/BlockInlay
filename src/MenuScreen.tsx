@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   FlatList,
@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Blocks from './Blocks';
-import { LEVEL_COUNT, getLevel, idAt, type Level } from './levels';
+import { getLevel, type Level } from './levels';
 import {
   buildMenu,
   heightOf,
@@ -23,7 +23,7 @@ import {
   TILE_HEIGHT,
   type Item,
 } from './menuLayout';
-import { theme } from './theme';
+import type { Theme } from './theme';
 
 const PADDING = 18;
 /** the fixed box each board silhouette is scaled to fit */
@@ -37,18 +37,32 @@ type Props = {
   solved: ReadonlySet<string>;
   /** false until saved progress has been read, so the list opens in the right place */
   loaded: boolean;
+  /** the level the list should open on, or -1 to open at the very top */
+  landAt: number;
   onPick: (levelId: string) => void;
   onOpenSettings: () => void;
+  /** the chapter the player is up to — the menu wears its colours */
+  theme: Theme;
 };
 
 /** the board shape, scaled to fit the tile's thumbnail box */
-function BoardThumb({ level, width, solved }: { level: Level; width: number; solved: boolean }) {
+function BoardThumb({
+  level,
+  width,
+  solved,
+  theme,
+}: {
+  level: Level;
+  width: number;
+  solved: boolean;
+  theme: Theme;
+}) {
   const cell = Math.max(
     3,
     Math.floor(Math.min(width / level.board.cols, THUMB_HEIGHT / level.board.rows)),
   );
   return (
-    <View style={[styles.thumbBox, { height: THUMB_HEIGHT }]}>
+    <View style={[thumbBox, { height: THUMB_HEIGHT }]}>
       <View style={{ width: level.board.cols * cell, height: level.board.rows * cell }}>
         <Blocks
           shape={{
@@ -63,7 +77,15 @@ function BoardThumb({ level, width, solved }: { level: Level; width: number; sol
   );
 }
 
-export default function MenuScreen({ solved, loaded, onPick, onOpenSettings }: Props) {
+export default function MenuScreen({
+  solved,
+  loaded,
+  landAt,
+  onPick,
+  onOpenSettings,
+  theme,
+}: Props) {
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const list = useRef<FlatList<Item>>(null);
@@ -79,13 +101,6 @@ export default function MenuScreen({ solved, loaded, onPick, onOpenSettings }: P
   const [scrubLabel, setScrubLabel] = useState('');
   const scrollY = useRef(new Animated.Value(0)).current;
   const grabbedAt = useRef(0);
-
-  /** the furthest level the player has finished — where the list should open */
-  const furthestSolved = useMemo(() => {
-    if (!solved.size) return 0;
-    for (let i = LEVEL_COUNT - 1; i >= 0; i--) if (solved.has(idAt(i))) return i;
-    return 0;
-  }, [solved]);
 
   const maxScroll = Math.max(1, height - listHeight);
   const thumbHeight = Math.max(
@@ -128,6 +143,35 @@ export default function MenuScreen({ solved, loaded, onPick, onOpenSettings }: P
       }),
     [scrubTo],
   );
+
+  /**
+   * Land on the level the player is on.
+   *
+   * Deliberately *not* `initialScrollIndex`. That prop only chooses which cells
+   * get built first — it never moves the scroll position — and worse, while it
+   * is set `VirtualizedList` refuses to recompute its window whenever the offset
+   * is exactly zero, on the grounds that it must be the initial render. So the
+   * one place the list would not re-render was the very top: scrubbing there
+   * left the first levels unbuilt and the screen blank, while every other
+   * position worked. Scrolling by hand costs eight tiles built at the top before
+   * the jump, and nothing else.
+   *
+   * Latched against `columns` rather than a bare flag because a width change
+   * remounts the list, and a remounted list starts back at the top.
+   */
+  const landedFor = useRef<number | null>(null);
+  const land = useCallback(() => {
+    if (landedFor.current === columns || landAt < 0) return;
+    const item = itemOfLevel[landAt];
+    if (item === undefined) return;
+    landedFor.current = columns;
+    list.current?.scrollToOffset({ offset: offsets[item], animated: false });
+  }, [columns, itemOfLevel, landAt, offsets]);
+
+  // `getItemLayout` means the list knows its full height before it has measured
+  // anything, so this commit is late enough to scroll; the content-size callback
+  // below is the backstop for a platform that only settles after layout
+  useLayoutEffect(land, [land]);
 
   const layout = useCallback(
     (_data: ArrayLike<Item> | null | undefined, index: number) => ({
@@ -172,7 +216,7 @@ export default function MenuScreen({ solved, loaded, onPick, onOpenSettings }: P
                   <Text style={styles.number}>{index + 1}</Text>
                   {isSolved ? <Text style={styles.tick}>✓</Text> : null}
                 </View>
-                <BoardThumb level={level} width={tileWidth - 24} solved={isSolved} />
+                <BoardThumb level={level} width={tileWidth - 24} solved={isSolved} theme={theme} />
                 <Text style={styles.name} numberOfLines={1}>
                   {level.name ?? level.difficulty}
                 </Text>
@@ -186,7 +230,7 @@ export default function MenuScreen({ solved, loaded, onPick, onOpenSettings }: P
         </View>
       );
     },
-    [onPick, solved, tileWidth],
+    [onPick, solved, styles, theme, tileWidth],
   );
 
   return (
@@ -220,10 +264,8 @@ export default function MenuScreen({ solved, loaded, onPick, onOpenSettings }: P
             renderItem={renderItem}
             keyExtractor={(item) => item.key}
             getItemLayout={layout}
-            // open where the player left off rather than back at level one; a
-            // player with no progress starts at the very top, header and all
-            initialScrollIndex={solved.size ? itemOfLevel[furthestSolved] : 0}
-            onScrollToIndexFailed={() => {}}
+            // `land` above is what opens the list where the player left off
+            onContentSizeChange={land}
             initialNumToRender={8}
             windowSize={7}
             scrollEventThrottle={16}
@@ -260,160 +302,164 @@ export default function MenuScreen({ solved, loaded, onPick, onOpenSettings }: P
   );
 }
 
-const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: theme.bg,
-  },
-  body: {
-    flex: 1,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    paddingHorizontal: PADDING,
-    paddingBottom: 14,
-  },
-  headerText: {
-    flex: 1,
-  },
-  settingsButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: theme.panel,
-    borderWidth: 1,
-    borderColor: theme.panelEdge,
-  },
-  settingsIcon: {
-    color: theme.text,
-    fontSize: 19,
-    lineHeight: 23,
-  },
-  title: {
-    color: theme.text,
-    fontSize: 28,
-    fontWeight: '800',
-    letterSpacing: 0.2,
-  },
-  subtitle: {
-    color: theme.textDim,
-    fontSize: 13,
-    marginTop: 4,
-  },
-  scrubber: {
-    position: 'absolute',
-    right: 0,
-    top: 0,
-    bottom: 0,
-    width: SCRUBBER_WIDTH,
-    alignItems: 'center',
-  },
-  scrubberTrack: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    width: 2,
-    borderRadius: 1,
-    backgroundColor: theme.panelEdge,
-  },
-  scrubberThumb: {
-    width: BAR_WIDTH,
-    borderRadius: BAR_WIDTH / 2,
-    backgroundColor: theme.panelEdgeHot,
-  },
-  scrubberThumbHeld: {
-    width: BAR_WIDTH + 4,
-    borderRadius: (BAR_WIDTH + 4) / 2,
-    backgroundColor: theme.accent,
-  },
-  scrubBubble: {
-    position: 'absolute',
-    right: SCRUBBER_WIDTH + 2,
-    top: 0,
-    minWidth: 62,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 999,
-    backgroundColor: theme.panel,
-    borderWidth: 1.5,
-    borderColor: theme.panelEdgeHot,
-    alignItems: 'center',
-  },
-  scrubBubbleText: {
-    color: theme.accent,
-    fontSize: 15,
-    fontWeight: '800',
-  },
-  section: {
-    height: SECTION_HEIGHT,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingBottom: 8,
-  },
-  sectionLabel: {
-    color: theme.text,
-    fontSize: 15,
-    fontWeight: '800',
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
-  },
-  sectionCount: {
-    color: theme.textDim,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  row: {
-    flexDirection: 'row',
-  },
-  tile: {
-    backgroundColor: theme.panel,
-    borderRadius: 18,
-    borderWidth: 1.5,
-    borderColor: theme.panelEdge,
-    paddingHorizontal: 12,
-    paddingTop: 10,
-    paddingBottom: 12,
-  },
-  tileSolved: {
-    borderColor: theme.panelEdgeHot,
-  },
-  tilePressed: {
-    opacity: 0.7,
-  },
-  tileTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    height: 18,
-  },
-  number: {
-    color: theme.textDim,
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  tick: {
-    color: theme.accent,
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  thumbBox: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginVertical: 8,
-  },
-  name: {
-    color: theme.text,
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  meta: {
-    color: theme.textDim,
-    fontSize: 12,
-    marginTop: 2,
-  },
-});
+/** no colour in it, so it is the same in every theme */
+const thumbBox = {
+  alignItems: 'center',
+  justifyContent: 'center',
+  marginVertical: 8,
+} as const;
+
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
+    root: {
+      flex: 1,
+      // transparent: the drifting shapes behind the app show through
+      backgroundColor: 'transparent',
+    },
+    body: {
+      flex: 1,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 12,
+      paddingHorizontal: PADDING,
+      paddingBottom: 14,
+    },
+    headerText: {
+      flex: 1,
+    },
+    settingsButton: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.panel,
+      borderWidth: 1,
+      borderColor: theme.panelEdge,
+    },
+    settingsIcon: {
+      color: theme.text,
+      fontSize: 19,
+      lineHeight: 23,
+    },
+    title: {
+      color: theme.text,
+      fontSize: 28,
+      fontWeight: '800',
+      letterSpacing: 0.2,
+    },
+    subtitle: {
+      color: theme.textDim,
+      fontSize: 13,
+      marginTop: 4,
+    },
+    scrubber: {
+      position: 'absolute',
+      right: 0,
+      top: 0,
+      bottom: 0,
+      width: SCRUBBER_WIDTH,
+      alignItems: 'center',
+    },
+    scrubberTrack: {
+      position: 'absolute',
+      top: 0,
+      bottom: 0,
+      width: 2,
+      borderRadius: 1,
+      backgroundColor: theme.panelEdge,
+    },
+    scrubberThumb: {
+      width: BAR_WIDTH,
+      borderRadius: BAR_WIDTH / 2,
+      backgroundColor: theme.panelEdgeHot,
+    },
+    scrubberThumbHeld: {
+      width: BAR_WIDTH + 4,
+      borderRadius: (BAR_WIDTH + 4) / 2,
+      backgroundColor: theme.accent,
+    },
+    scrubBubble: {
+      position: 'absolute',
+      right: SCRUBBER_WIDTH + 2,
+      top: 0,
+      minWidth: 62,
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      borderRadius: 999,
+      backgroundColor: theme.panel,
+      borderWidth: 1.5,
+      borderColor: theme.panelEdgeHot,
+      alignItems: 'center',
+    },
+    scrubBubbleText: {
+      color: theme.accent,
+      fontSize: 15,
+      fontWeight: '800',
+    },
+    section: {
+      height: SECTION_HEIGHT,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingBottom: 8,
+    },
+    sectionLabel: {
+      color: theme.text,
+      fontSize: 15,
+      fontWeight: '800',
+      letterSpacing: 0.6,
+      textTransform: 'uppercase',
+    },
+    sectionCount: {
+      color: theme.textDim,
+      fontSize: 13,
+      fontWeight: '700',
+    },
+    row: {
+      flexDirection: 'row',
+    },
+    tile: {
+      backgroundColor: theme.panel,
+      borderRadius: 18,
+      borderWidth: 1.5,
+      borderColor: theme.panelEdge,
+      paddingHorizontal: 12,
+      paddingTop: 10,
+      paddingBottom: 12,
+    },
+    tileSolved: {
+      borderColor: theme.panelEdgeHot,
+    },
+    tilePressed: {
+      opacity: 0.7,
+    },
+    tileTop: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      height: 18,
+    },
+    number: {
+      color: theme.textDim,
+      fontSize: 13,
+      fontWeight: '800',
+    },
+    tick: {
+      color: theme.accent,
+      fontSize: 14,
+      fontWeight: '800',
+    },
+    name: {
+      color: theme.text,
+      fontSize: 16,
+      fontWeight: '700',
+    },
+    meta: {
+      color: theme.textDim,
+      fontSize: 12,
+      marginTop: 2,
+    },
+  });

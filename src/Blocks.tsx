@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, type GestureResponderHandlers } from 'react-native';
 import type { Cell } from './levels';
-import { theme } from './theme';
+import { DEFAULT_THEME } from './theme';
 
 /** anything that can be drawn as a group of squares — a piece, or a whole board */
 export type Shape = { cells: Cell[]; color: string; shade: string };
@@ -14,12 +14,21 @@ type Props = {
   faded?: boolean;
   /** drop shadow — used while the piece is in the air */
   lifted?: boolean;
+  /** the outline colour for a faded shape — the current theme's ghost */
+  ghost?: string;
   /** drag gesture, attached to every square so only the shape itself is grabbable */
   handlers?: GestureResponderHandlers;
 };
 
 /** The squares of one shape, laid out from the top-left of its bounding box. */
-export default function Blocks({ shape, cell, faded = false, lifted = false, handlers }: Props) {
+export default function Blocks({
+  shape,
+  cell,
+  faded = false,
+  lifted = false,
+  ghost = DEFAULT_THEME.ghost,
+  handlers,
+}: Props) {
   const gap = Math.max(1, Math.round(cell * 0.05));
   const radius = Math.max(2, Math.round(cell * 0.2));
   const lip = Math.max(1, Math.round(cell * 0.14));
@@ -44,7 +53,7 @@ export default function Blocks({ shape, cell, faded = false, lifted = false, han
               borderRadius: radius,
               backgroundColor: faded ? 'transparent' : shape.shade,
               borderWidth: faded ? 1.5 : 0,
-              borderColor: faded ? theme.ghost : 'transparent',
+              borderColor: faded ? ghost : 'transparent',
               ...(lifted ? { boxShadow: '0px 6px 12px rgba(0,0,0,0.45)' } : null),
             }}
           >

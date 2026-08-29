@@ -47,14 +47,19 @@ Pieces cannot be rotated, so every piece has exactly one home.
 
 Music loops while you play, and a chime marks a finished board — the music ducks
 under it for a moment so it can actually be heard. Both can be switched off in
-Settings. Solved boards are ticked in the level
-list and kept on the device, so they survive closing the app; the list reopens at
-the furthest board you have finished rather than back at level one, and the bar
-down the right edge can be dragged to fly through five thousand of them.
+Settings. Solved boards are ticked in the level list and kept on the device, so
+they survive closing the app. The list opens beside the board you are on — the
+last one you opened, or, before you have opened any, wherever your progress left
+you — rather than back at level one, and the bar down the right edge can be
+dragged to fly through five thousand of them.
 
 **Settings** (the gear in the level list) switches the music and the sound effects
-off, shows how many boards are solved, and can clear that progress — behind a
-confirmation, since it can't be undone.
+off, and can clear your progress — behind a confirmation, since it can't be undone.
+
+Every ten levels the whole app changes colour, and the level list wears the
+colours of the board you are on. Soft shapes drift behind everything in a
+second colour of that chapter's own; they hold still if the device asks for
+reduced motion.
 
 ## The levels
 
@@ -75,12 +80,28 @@ to try before it has proved the board has exactly one solution. It is measured,
 not guessed, and the labels are cut from it — so a level's difficulty follows from
 the puzzle rather than from where it sits in the list.
 
+The two packs are labelled with different words — Warm-up · Easy · Medium · Hard ·
+Expert for the drawn boards, Steady · Tricky · Thorny · Punishing · Relentless for
+the generated ones — because each ramps from easy to hard *separately*. Sharing
+one vocabulary meant finishing two hundred boards to reach "Hard" and then being
+shown "Warm-up" at level 201, which reads as being sent back to the beginning
+rather than as starting a much longer climb. None of the generated words
+describes a beginner; the bands underneath them are the same five score
+thresholds either way.
+
 | | drawn | generated | all |
 | --- | --- | --- | --- |
 | boards | 200 | 4,800 | 5,000 |
 | score | 3 – 420 | 18 – 4,215 | 3 – 4,215 |
 | cells | 12 – 35 | 18 – 49 | 12 – 49 |
+| rows | 3 – 7 | 3 – 10 | 3 – 10 |
+| columns | 4 – 9 | 3 – 10 | 3 – 10 |
 | pieces | 3 – 9 | 4 – 9 | 3 – 9 |
+
+No board is more than ten squares in either direction: the generator draws into a
+10×10 grid, and the drawn ones stay well inside it at 7 by 9. That ceiling is
+what lets one sizing rule fit every board on every screen — `npm test` checks all
+5,000 against five device sizes down to a 320×568 phone.
 
 Five thousand costs about 600 KB of level data and, because only the scores are
 read at launch, none of it is parsed until a board is actually opened — building
@@ -116,6 +137,9 @@ piece counts, tray layout, menu thumbnails and level order are all derived.
 | file | what's in it |
 | --- | --- |
 | [src/levels.ts](src/levels.ts) | types, difficulty bands, and assembling both packs |
+| [src/theme.ts](src/theme.ts) | the twenty palettes, and which levels wear which |
+| [src/backdropShapes.ts](src/backdropShapes.ts) | the drifting shapes, their laps, and the soft-edge maths |
+| [src/Backdrop.tsx](src/Backdrop.tsx) | drawing and moving them |
 | [src/handmade.ts](src/handmade.ts) | the 200 drawn boards, as `#` patterns |
 | [src/generated.ts](src/generated.ts) | the 4,800 generated boards, one per line |
 | [src/solve.ts](src/solve.ts) | the one arrangement that fills a board — what a hint points at |
@@ -136,6 +160,58 @@ piece counts, tray layout, menu thumbnails and level order are all derived.
 | [scripts/make-sound.mjs](scripts/make-sound.mjs) | synthesises the finish chime |
 | [scripts/verify-levels.mjs](scripts/verify-levels.mjs) | proves every level has one perfect solution |
 | [scripts/test-placement.mjs](scripts/test-placement.mjs) | checks the drop/snap rules |
+
+## Chapters
+
+Levels are grouped into chapters that share a palette — background, panels,
+accent and the nine piece colours all move together, so crossing into a new one
+looks like arriving somewhere rather than like the same board recoloured. A
+chapter is ten levels for the first hundred and twenty after that: by then a
+fresh palette is worth more spread thinner. The level list is painted in the
+colours of the board you are on — the last one you opened, or before that the one
+after the furthest you have finished — so the chapter is visible before you open
+it, and leaving a board puts you back beside it rather than at your high-water
+mark. There are twenty
+palettes and the set recycles, which it first does at level 301.
+
+A palette is written as a seed of six numbers rather than thirty hex codes:
+
+```ts
+{ name: 'Lagoon', hue: 186, chroma: 28, depth: 7.5,
+  accent: [168, 80, 58], palette: { hue: 150, spread: 300, sat: 66, light: 65 } }
+```
+
+`hue`, `chroma` and `depth` fix the neutrals — background, panel, body text, dim
+text, menu thumbnails are all that one hue at different lightnesses — and the
+`palette` recipe walks the colour wheel for the nine piece colours. Adding a
+theme is appending one of those to `SEEDS`; it cannot come out internally
+inconsistent the way a hand-picked set of thirty codes can, and `npm test` holds
+every one of them to the same bar: nine distinct piece colours, a filled block at
+least 3:1 against the background, readable text and accent, no two pieces closer
+than the eye can split, and the three colours an early three-piece board uses at
+least as far apart as the original purple's.
+
+Two details that are less obvious than they look. The colours are handed out four
+ninths of the way round the wheel each time rather than in order — a three-piece
+board would otherwise get three neighbouring hues. And a piece stores *which*
+colour it wears, not the colour itself: levels are built once and kept for the
+session, so a piece carrying a hex code would still be wearing whichever
+chapter's palette happened to be current the first time it was opened.
+
+Each chapter also carries three **drift** colours, a third of the wheel apart and
+anchored just off the accent, for the shapes moving behind the app. They are the
+one place a theme can show a second colour without competing with the pieces.
+
+Those shapes have soft edges without a blur filter. `filter: blur()` would be one
+line, but on Android it needs API 31 and silently does nothing below it, which
+would leave hard-edged circles on exactly the phones least able to carry them. So
+each shape is nine copies of itself at growing sizes and about 1% opacity each:
+where many overlap it is dense, and towards the edge fewer and fewer do. That is
+a soft falloff built out of nothing but background colour, drawn the same way by
+every version of every platform. The whole stack composes to roughly a tenth of
+the colour at a shape's core — `npm test` pins that, because the first attempt
+was five times stronger and the result was a lava lamp. The six laps are all
+prime numbers of seconds, so no two shapes ever fall into step.
 
 ## Adding a drawn board
 

@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { BackHandler, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { theme } from './theme';
+import type { Theme } from './theme';
 
 type Props = {
   solved: ReadonlySet<string>;
@@ -11,6 +11,7 @@ type Props = {
   onSetSoundOn: (on: boolean) => void;
   musicOn: boolean;
   onSetMusicOn: (on: boolean) => void;
+  theme: Theme;
 };
 
 export default function SettingsScreen({
@@ -21,7 +22,9 @@ export default function SettingsScreen({
   onSetSoundOn,
   musicOn,
   onSetMusicOn,
+  theme,
 }: Props) {
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const insets = useSafeAreaInsets();
   const [confirming, setConfirming] = useState(false);
   const [cleared, setCleared] = useState(false);
@@ -158,158 +161,160 @@ export default function SettingsScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  toggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-  },
-  divider: {
-    height: 1,
-    marginVertical: 14,
-    backgroundColor: theme.panelEdge,
-  },
-  toggleText: {
-    flex: 1,
-  },
-  switchTrack: {
-    width: 52,
-    height: 31,
-    borderRadius: 999,
-    padding: 3,
-    justifyContent: 'center',
-    backgroundColor: theme.panelEdge,
-  },
-  switchTrackOn: {
-    backgroundColor: theme.accent,
-  },
-  switchKnob: {
-    width: 25,
-    height: 25,
-    borderRadius: 999,
-    backgroundColor: theme.text,
-  },
-  switchKnobOn: {
-    alignSelf: 'flex-end',
-  },
-  aboutSpacer: {
-    marginTop: 10,
-  },
-  root: {
-    flex: 1,
-    backgroundColor: theme.bg,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 22,
-  },
-  title: {
-    color: theme.text,
-    fontSize: 26,
-    fontWeight: '800',
-  },
-  iconButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: theme.panel,
-    borderWidth: 1,
-    borderColor: theme.panelEdge,
-  },
-  iconText: {
-    color: theme.text,
-    fontSize: 26,
-    lineHeight: 30,
-    fontWeight: '600',
-  },
-  pressed: {
-    opacity: 0.65,
-  },
-  section: {
-    color: theme.textDim,
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1.4,
-    marginBottom: 8,
-    marginTop: 6,
-  },
-  card: {
-    backgroundColor: theme.panel,
-    borderRadius: 18,
-    borderWidth: 1.5,
-    borderColor: theme.panelEdge,
-    padding: 16,
-    marginBottom: 22,
-  },
-  cardTitle: {
-    color: theme.text,
-    fontSize: 17,
-    fontWeight: '700',
-  },
-  cardText: {
-    color: theme.textDim,
-    fontSize: 13,
-    lineHeight: 19,
-  },
-  dangerOutline: {
-    marginTop: 16,
-    paddingVertical: 12,
-    borderRadius: 999,
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: 'rgba(255,110,138,0.45)',
-  },
-  dangerOutlineText: {
-    color: theme.accent,
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  confirm: {
-    marginTop: 16,
-  },
-  confirmText: {
-    color: theme.text,
-    fontSize: 14,
-    lineHeight: 20,
-    marginBottom: 12,
-  },
-  confirmButtons: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  ghostButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 999,
-    alignItems: 'center',
-    backgroundColor: theme.bg,
-    borderWidth: 1,
-    borderColor: theme.panelEdge,
-  },
-  ghostButtonText: {
-    color: theme.text,
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  dangerButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 999,
-    alignItems: 'center',
-    backgroundColor: theme.accent,
-  },
-  dangerButtonText: {
-    color: '#2A0A14',
-    fontSize: 15,
-    fontWeight: '800',
-  },
-  cleared: {
-    color: theme.accent,
-    fontSize: 13,
-    marginTop: 14,
-  },
-});
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
+    toggleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 14,
+    },
+    divider: {
+      height: 1,
+      marginVertical: 14,
+      backgroundColor: theme.panelEdge,
+    },
+    toggleText: {
+      flex: 1,
+    },
+    switchTrack: {
+      width: 52,
+      height: 31,
+      borderRadius: 999,
+      padding: 3,
+      justifyContent: 'center',
+      backgroundColor: theme.panelEdge,
+    },
+    switchTrackOn: {
+      backgroundColor: theme.accent,
+    },
+    switchKnob: {
+      width: 25,
+      height: 25,
+      borderRadius: 999,
+      backgroundColor: theme.text,
+    },
+    switchKnobOn: {
+      alignSelf: 'flex-end',
+    },
+    aboutSpacer: {
+      marginTop: 10,
+    },
+    root: {
+      flex: 1,
+      // transparent: the drifting shapes behind the app show through
+      backgroundColor: 'transparent',
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      marginBottom: 22,
+    },
+    title: {
+      color: theme.text,
+      fontSize: 26,
+      fontWeight: '800',
+    },
+    iconButton: {
+      width: 38,
+      height: 38,
+      borderRadius: 19,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.panel,
+      borderWidth: 1,
+      borderColor: theme.panelEdge,
+    },
+    iconText: {
+      color: theme.text,
+      fontSize: 26,
+      lineHeight: 30,
+      fontWeight: '600',
+    },
+    pressed: {
+      opacity: 0.65,
+    },
+    section: {
+      color: theme.textDim,
+      fontSize: 11,
+      fontWeight: '800',
+      letterSpacing: 1.4,
+      marginBottom: 8,
+      marginTop: 6,
+    },
+    card: {
+      backgroundColor: theme.panel,
+      borderRadius: 18,
+      borderWidth: 1.5,
+      borderColor: theme.panelEdge,
+      padding: 16,
+      marginBottom: 22,
+    },
+    cardTitle: {
+      color: theme.text,
+      fontSize: 17,
+      fontWeight: '700',
+    },
+    cardText: {
+      color: theme.textDim,
+      fontSize: 13,
+      lineHeight: 19,
+    },
+    dangerOutline: {
+      marginTop: 16,
+      paddingVertical: 12,
+      borderRadius: 999,
+      alignItems: 'center',
+      borderWidth: 1.5,
+      borderColor: theme.accentSoft,
+    },
+    dangerOutlineText: {
+      color: theme.accent,
+      fontSize: 15,
+      fontWeight: '700',
+    },
+    confirm: {
+      marginTop: 16,
+    },
+    confirmText: {
+      color: theme.text,
+      fontSize: 14,
+      lineHeight: 20,
+      marginBottom: 12,
+    },
+    confirmButtons: {
+      flexDirection: 'row',
+      gap: 10,
+    },
+    ghostButton: {
+      flex: 1,
+      paddingVertical: 12,
+      borderRadius: 999,
+      alignItems: 'center',
+      backgroundColor: theme.bg,
+      borderWidth: 1,
+      borderColor: theme.panelEdge,
+    },
+    ghostButtonText: {
+      color: theme.text,
+      fontSize: 15,
+      fontWeight: '700',
+    },
+    dangerButton: {
+      flex: 1,
+      paddingVertical: 12,
+      borderRadius: 999,
+      alignItems: 'center',
+      backgroundColor: theme.accent,
+    },
+    dangerButtonText: {
+      color: theme.accentInk,
+      fontSize: 15,
+      fontWeight: '800',
+    },
+    cleared: {
+      color: theme.accent,
+      fontSize: 13,
+      marginTop: 14,
+    },
+  });
