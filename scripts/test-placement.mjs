@@ -8,9 +8,11 @@ import { settle, spend, refillProgress, FULL_BANK, MAX_HINTS, REFILL_MS } from '
 import { nextHint, solveLevel } from '../src/solve.ts';
 import { boardCell, trayLayout, CHROME, ROOT_PADDING } from '../src/gameLayout.ts';
 import { emptyBoard, fitsAt, isSolved, occupiedExcept, snapToBoard } from '../src/placement.ts';
-import { THEMES, chapterAt, themeAt, themeIndexAt, CHAPTER, PIECE_COLOURS } from '../src/theme.ts';
+import { THEMES, chapterAt, themeAt, themeIndexAt, CHAPTER, PIECE_COLOURS, tone } from '../src/theme.ts';
+import { DEPTH, TURN_STEPS, edgesOf, litBy, reach, rimRuns, rowRuns, shineBy, spinOverTurn, stretches, turnedX, wallColumns, wallEdge, wallFront } from '../src/solid.ts';
 import { SHAPES, SHELLS, SHELL_ALPHA, coreAlpha, shellScales, wander } from '../src/backdropShapes.ts';
 import { readFile } from 'node:fs/promises';
+import { inflateSync } from 'node:zlib';
 
 /** every level, built once; the app builds them lazily but the tests want all of them */
 const EVERY = Array.from({ length: LEVEL_COUNT }, (_, i) => getLevel(i));
@@ -572,6 +574,336 @@ for (let i = 0; i < SHAPES.length; i++) {
   }
 }
 check('the shapes never fall into step with each other', inStep === null, inStep ?? '');
+
+// ---- the finished board, turning -------------------------------------------
+// A solved board fuses into a solid and keeps turning. It is drawn by scaling
+// and sliding flat views rather than by redrawing it every frame, so a sign the
+// wrong way round here does not throw — it just quietly turns the board inside
+// out, or lights the underside, for whoever happens to finish a level next.
+
+const spin = spinOverTurn();
+let turnFaults = [];
+for (const [name, cos, sin] of [['square on', 1, 0], ['a quarter turn', 0, 1], ['showing its back', -1, 0]]) {
+  const x = turnedX(10, 2, cos, sin);
+  if (Math.abs(x - (10 * cos + 2 * sin)) > 1e-9) turnFaults.push(`${name}: a point lands at ${x}`);
+}
+check('a point of the solid turns where it should', turnFaults.length === 0, turnFaults.join('; '));
+
+check('square on, the solid is the flat board',
+  spin.squash[0] === 1 && spin.faceSlide[0] === 0 && spin.wallOpen[0] === 0 && spin.wallSlide[0] === 0);
+const edgeOn = spin.stops.indexOf(0.25);
+check('a quarter turn in, the board is all edge',
+  Math.abs(spin.squash[edgeOn]) < 1e-9 && Math.abs(spin.wallOpen[edgeOn] - 1) < 1e-9,
+  `${spin.squash[edgeOn].toFixed(3)} of its width, walls ${spin.wallOpen[edgeOn].toFixed(3)} open`);
+
+// the driver runs 0..1 and starts the next lap the instant it finishes one, so
+// every curve has to come home to exactly where it set off
+const last = spin.stops.length - 1;
+const curves = ['squash', 'faceSlide', 'wallOpen', 'wallSlide', 'frontLit', 'backLit', 'leftLit', 'rightLit'];
+const ends = curves.filter((k) => Math.abs(spin[k][0] - spin[k][last]) > 1e-9);
+check('the turn ends where it began, so the lap is seamless',
+  spin.stops[0] === 0 && spin.stops[last] === 1 && ends.length === 0, ends.join(', '));
+
+// every curve is the same one line applied to a different part of the solid; if
+// any of them drifts from it, that part turns at odds with the rest
+let derivedFaults = [];
+for (let i = 0; i <= TURN_STEPS; i++) {
+  const angle = spin.stops[i] * Math.PI * 2;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const off = (what, got, want) => {
+    if (Math.abs(got - want) > 1e-9) derivedFaults.push(`${what} at ${spin.stops[i].toFixed(3)}`);
+  };
+  // the mosaic is as wide as a point a pixel out from the axis ends up
+  off('squash', spin.squash[i], turnedX(1, 0, cos, sin));
+  // the front face rides half a depth in front of the axis; the back, behind it
+  off('faceSlide', spin.faceSlide[i], turnedX(0, 0.5, cos, sin));
+  // a wall is one depth of slab, seen end on
+  off('wallOpen', spin.wallOpen[i], Math.abs(turnedX(0, 1, cos, sin)));
+  // and it slides from where it was laid out to where the turn puts it
+  off('wallSlide', spin.wallSlide[i], turnedX(1, 0, cos, sin) - 1);
+}
+check('every part of the solid turns by the same maths', derivedFaults.length === 0, derivedFaults.slice(0, 3).join('; '));
+
+// the samples are joined by straight lines, so the turn is only as smooth as
+// the gaps between them are small — measured on the widest board there is
+const widest = Math.max(...EVERY.map((l) => l.board.cols)) * 64;
+let worst = 0;
+for (let i = 0; i < TURN_STEPS; i++) {
+  const middle = (spin.stops[i] + spin.stops[i + 1]) / 2;
+  const drawn = (spin.squash[i] + spin.squash[i + 1]) / 2;
+  worst = Math.max(worst, Math.abs(drawn - Math.cos(middle * Math.PI * 2)) * (widest / 2));
+}
+check('the turn is sampled finely enough to look smooth', worst < 1,
+  `off by ${worst.toFixed(2)}px at worst on a ${widest}px board`);
+
+// ---- the light, which is what makes a turning picture read as a solid --------
+check('a face pointing into the light catches all of it, and away from it none',
+  Math.abs(litBy(-0.54, 0.84) - 1) < 0.01 && litBy(0.54, -0.84) === 0,
+  `${litBy(-0.54, 0.84).toFixed(3)} facing it, ${litBy(0.54, -0.84).toFixed(3)} away`);
+
+let lightFaults = [];
+for (let i = 0; i <= TURN_STEPS; i++) {
+  const at = spin.stops[i].toFixed(3);
+  for (const face of ['frontLit', 'backLit', 'leftLit', 'rightLit']) {
+    if (spin[face][i] < 0 || spin[face][i] > 1) lightFaults.push(`${face} is ${spin[face][i]} at ${at}`);
+  }
+  // faces back to back cannot both be looking at the same light
+  if (spin.frontLit[i] > 0 && spin.backLit[i] > 0) lightFaults.push(`both faces lit at ${at}`);
+  if (spin.leftLit[i] > 0 && spin.rightLit[i] > 0) lightFaults.push(`both walls lit at ${at}`);
+}
+check('no face is ever lit from behind itself', lightFaults.length === 0, lightFaults.slice(0, 3).join('; '));
+
+// the whole point of the light: it has to move over the solid as it turns, or
+// the turn is a picture being squashed rather than an object going round
+const swing = Math.max(...spin.frontLit) - Math.min(...spin.frontLit);
+check('the light moves across the solid as it turns', swing > 0.5,
+  `the front face runs from ${Math.min(...spin.frontLit).toFixed(2)} to ${Math.max(...spin.frontLit).toFixed(2)} lit`);
+// square on is where the solid takes over from the flat board, so it has to be
+// in full light: any shade at all there and the board visibly dims at the
+// moment it is finished, which is the one moment it should not
+check('square on, the face the player made is in full light, and the most lit thing there is',
+  spin.frontLit[0] === 1 && spin.frontLit[0] > spin.leftLit[0] && spin.frontLit[0] > spin.rightLit[0],
+  `face ${spin.frontLit[0].toFixed(2)}, walls ${spin.leftLit[0].toFixed(2)} and ${spin.rightLit[0].toFixed(2)}`);
+// and a wall has to come into its own as the face goes away, or edge-on is a
+// black bar where the board used to be
+check('a wall is at its brightest when the face is at its narrowest',
+  spin.leftLit[edgeOn] > spin.leftLit[0] && spin.leftLit[edgeOn] > 0.7,
+  `${spin.leftLit[0].toFixed(2)} face-on, ${spin.leftLit[edgeOn].toFixed(2)} edge-on`);
+
+// ---- the fusing: one object, not a tray of tiles ----------------------------
+// Once the gaps close, an edge between two squares is inside the material. It
+// has no wall, and no light catches it. Only the outline is still a surface.
+const skinned = edgesOf(heart.board.cells);
+let fuseFaults = [];
+for (const facet of skinned) {
+  const has = (row, col) => heart.board.keys.has(cellKey(row, col));
+  if (facet.edges.left !== !has(facet.row, facet.col - 1)) fuseFaults.push(`(${facet.row},${facet.col}) left`);
+  if (facet.edges.right !== !has(facet.row, facet.col + 1)) fuseFaults.push(`(${facet.row},${facet.col}) right`);
+  if (facet.edges.top !== !has(facet.row - 1, facet.col)) fuseFaults.push(`(${facet.row},${facet.col}) top`);
+  if (facet.edges.bottom !== !has(facet.row + 1, facet.col)) fuseFaults.push(`(${facet.row},${facet.col}) bottom`);
+}
+check('a square knows which of its sides are on the outside', fuseFaults.length === 0, fuseFaults.slice(0, 3).join('; '));
+check('the solid has an outline at all', skinned.some((f) => f.edges.left) && skinned.some((f) => f.edges.top));
+// every unbroken run of squares across a row starts once and ends once
+check('the outline closes: as many left edges as right, as many tops as bottoms',
+  skinned.filter((f) => f.edges.left).length === skinned.filter((f) => f.edges.right).length &&
+  skinned.filter((f) => f.edges.top).length === skinned.filter((f) => f.edges.bottom).length,
+  `${skinned.filter((f) => f.edges.left).length} across, ${skinned.filter((f) => f.edges.top).length} down`);
+// the regression this is really here for: a wall standing between two squares
+// that are now the same piece of material shows up as a seam down the middle
+const inner = skinned.filter((f) => f.edges.left).some((f) => heart.board.keys.has(cellKey(f.row, f.col - 1)));
+check('no wall stands between two squares that have fused', !inner);
+
+// ---- the outline, in the lengths it is actually drawn in --------------------
+// The bug this is all here for: a lit edge drawn square by square has two ends
+// inside the material, and every way of softening an edge spreads it along the
+// rim as well as across it — so each of those ends puts a smear of light on a
+// join that is supposed to have fused, and the finished solid wears the grid it
+// was tiled from. Drawn in runs, the only ends are the corners of the object.
+check('a run of numbers is gathered where it runs, and split where it does not',
+  JSON.stringify(stretches([5, 1, 2, 3, 9, 10])) ===
+    JSON.stringify([{ start: 1, span: 3 }, { start: 5, span: 1 }, { start: 9, span: 2 }]),
+  JSON.stringify(stretches([5, 1, 2, 3, 9, 10])));
+
+// every level, because a run that misses an edge is a hole in the outline of
+// one board in a thousand and nothing at all on the rest
+let runFaults = [];
+let longest = 0;
+for (const level of EVERY) {
+  const skin = edgesOf(level.board.cells);
+  const runs = rimRuns(skin);
+  for (const side of ['top', 'bottom', 'left', 'right']) {
+    const across = side === 'top' || side === 'bottom';
+    // the squares this side is exposed on, and the squares the runs claim
+    const bare = new Set(skin.filter((f) => f.edges[side]).map((f) => cellKey(f.row, f.col)));
+    const drawn = [];
+    for (const run of runs.filter((r) => r.side === side)) {
+      longest = Math.max(longest, run.span);
+      for (let i = 0; i < run.span; i++) {
+        drawn.push(cellKey(run.row + (across ? 0 : i), run.col + (across ? i : 0)));
+      }
+    }
+    if (drawn.length !== bare.size) runFaults.push(`${level.id} ${side}: ${drawn.length} drawn for ${bare.size} edges`);
+    if (new Set(drawn).size !== drawn.length) runFaults.push(`${level.id} ${side}: a square is drawn twice`);
+    if (drawn.some((k) => !bare.has(k))) runFaults.push(`${level.id} ${side}: light on an edge that has fused`);
+
+    // and no run stops where another one starts: an end inside a straight
+    // stretch is exactly the smear this replaced, just rarer
+    const lanes = new Map();
+    for (const run of runs.filter((r) => r.side === side)) {
+      const lane = across ? run.row : run.col;
+      const from = across ? run.col : run.row;
+      const list = lanes.get(lane) ?? [];
+      list.push([from, from + run.span]);
+      lanes.set(lane, list);
+    }
+    for (const [lane, spans] of lanes) {
+      spans.sort((a, b) => a[0] - b[0]);
+      for (let i = 1; i < spans.length; i++) {
+        if (spans[i][0] <= spans[i - 1][1]) runFaults.push(`${level.id} ${side} ${lane}: two runs meet at ${spans[i][0]}`);
+      }
+    }
+  }
+}
+check('every length of the outline is drawn once, and only where the solid ends',
+  runFaults.length === 0, runFaults.slice(0, 3).join('; '));
+check('a straight stretch of outline is one length, not one per square',
+  longest > 1, `the longest run anywhere is ${longest} squares`);
+
+// ---- the corners, which are rounded off the way the loose pieces are --------
+// A length of outline turns a corner at either of its ends only where the square
+// there is bare on the side the run is heading in as well. Anything drawn along
+// the outline rounds off at those ends and nowhere else, so a cap in the wrong
+// place is either a square point on a rounded object or light left standing out
+// past the shape it is lying on.
+let capFaults = [];
+for (const level of EVERY) {
+  const skin = edgesOf(level.board.cells);
+  const bare = (row, col) => !level.board.keys.has(cellKey(row, col));
+  for (const run of rimRuns(skin)) {
+    const across = run.side === 'top' || run.side === 'bottom';
+    const last = across
+      ? { row: run.row, col: run.col + run.span - 1 }
+      : { row: run.row + run.span - 1, col: run.col };
+    const want = across
+      ? [bare(run.row, run.col - 1), bare(last.row, last.col + 1)]
+      : [bare(run.row - 1, run.col), bare(last.row + 1, last.col)];
+    if (run.capStart !== want[0] || run.capEnd !== want[1]) {
+      capFaults.push(`${level.id} ${run.side} (${run.row},${run.col})`);
+    }
+  }
+}
+check('a length of outline knows which of its ends turn a corner of the object',
+  capFaults.length === 0, capFaults.slice(0, 3).join('; '));
+
+// ---- the grain, which is what stops the material being one hex code ---------
+// A built asset that has to be committed, so it is worth knowing it is there and
+// is still the thing scripts/make-grain.mjs promises. Half its pixels darken and
+// half lighten by about as much; laid over a colour it leaves that colour where
+// it was on average and no two pixels of it actually on it.
+const grain = await readFile(new URL('../assets/grain.png', import.meta.url));
+check('the grain tile is a png at all',
+  grain.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])));
+const side = grain.readUInt32BE(16);
+check('the grain tile is square, eight bit, and grey with an alpha to it',
+  side === grain.readUInt32BE(20) && grain[24] === 8 && grain[25] === 4,
+  `${side}x${grain.readUInt32BE(20)}, depth ${grain[24]}, colour type ${grain[25]}`);
+// the pixels themselves: rows of a filter byte and then grey/alpha pairs
+const pixels = inflateSync(grain.subarray(41, 41 + grain.readUInt32BE(33)));
+let lighten = 0;
+let darken = 0;
+let lift = 0;
+const alphas = [];
+for (let y = 0; y < side; y++) {
+  for (let x = 0; x < side; x++) {
+    const at = y * (side * 2 + 1) + 1 + x * 2;
+    const grey = pixels[at];
+    const alpha = pixels[at + 1] / 255;
+    if (grey > 127) lighten++;
+    else darken++;
+    lift += ((grey - 127.5) / 127.5) * alpha;
+    alphas.push(alpha);
+  }
+}
+const spots = side * side;
+check('the grain lightens as many pixels as it darkens',
+  Math.abs(lighten - darken) / spots < 0.05, `${lighten} up, ${darken} down of ${spots}`);
+check('so a patch of it leaves the colour it is laid on where it was',
+  Math.abs(lift / spots) < 0.02, `${(lift / spots).toFixed(4)} off neutral`);
+// and the pixels have to differ from each other, not only from the colour
+check('no two pixels of the grain are the same by much',
+  new Set(alphas).size > 200 && Math.max(...alphas) > 0.95 && Math.min(...alphas) < 0.05,
+  `${new Set(alphas).size} strengths, ${Math.min(...alphas).toFixed(2)} to ${Math.max(...alphas).toFixed(2)}`);
+
+// ---- the walls, and the order they are painted in ---------------------------
+let orderFaults = [];
+for (const [side, at] of [['left', 0.125], ['right', 0.625]]) {
+  const outline = skinned.filter((f) => (side === 'left' ? f.edges.left : f.edges.right));
+
+  const columns = wallColumns(outline, side);
+  const seen = columns.flatMap((c) => c.cells);
+  if (seen.length !== outline.length) orderFaults.push(`${side}: ${seen.length} of ${outline.length} walls drawn`);
+  if (new Set(columns.map((c) => c.col)).size !== columns.length) orderFaults.push(`${side}: a column came back twice`);
+
+  // how far away a wall ends up: a turn about the upright axis carries whatever
+  // is out to the right of it away from the viewer while the left comes forward
+  const sin = Math.sin(at * Math.PI * 2);
+  const away = columns.map(({ col }) => -wallEdge(col, side, 40, heart.board.cols * 40) * sin);
+  if (away.some((z, i) => i > 0 && z < away[i - 1])) {
+    orderFaults.push(`${side}: painted ${away.map((z) => z.toFixed(0)).join(', ')} — the far side lands on top of the near one`);
+  }
+}
+check('the walls are painted from the back of the solid forwards', orderFaults.length === 0, orderFaults.slice(0, 2).join('; '));
+
+check('a wall stands on the side of its square that it is named after',
+  wallEdge(0, 'left', 40, 400) === -200 && wallEdge(0, 'right', 40, 400) === -160 &&
+  wallEdge(9, 'left', 40, 400) === 160 && wallEdge(9, 'right', 40, 400) === 200,
+  `${wallEdge(0, 'left', 40, 400)} .. ${wallEdge(9, 'right', 40, 400)}`);
+
+// ---- and it turns inside the space the flat board was given ------------------
+// The walls only reach out to the side as the mosaic they belong to is drawing
+// in, so a turning board is barely wider than the still one — and the layout
+// already keeps 8px of slack across the board's width (see boardCell), which is
+// what the turn has to stay inside of. Nothing else is set aside for it.
+const SLACK = 4;
+let overrun = 0;
+let overrunAt = '';
+for (const level of EVERY) {
+  for (const [w, h] of [[390, 844], [360, 640], [430, 932], [820, 1180]]) {
+    const tray = trayLayout(level, w, h);
+    const cell = boardCell(level, w, h, { top: 47, bottom: 34 }, tray);
+    const width = level.board.cols * cell;
+    const depth = Math.max(6, Math.round(cell * DEPTH));
+    // the outermost thing on the solid: the wall down its far right-hand side
+    const out = reach(width / 2, depth) - width / 2;
+    if (out > overrun) {
+      overrun = out;
+      overrunAt = `level ${level.index + 1} at ${w}x${h}`;
+    }
+  }
+}
+check('a turning board stays inside the slack the layout already keeps',
+  overrun < SLACK, `${overrun.toFixed(2)}px of ${SLACK}px, worst at ${overrunAt}`);
+
+let sampledFaults = null;
+for (let i = 0; i <= TURN_STEPS; i++) {
+  const angle = spin.stops[i] * Math.PI * 2;
+  const got = Math.abs(turnedX(160, 20 / 2, Math.cos(angle), Math.sin(angle)));
+  if (got > reach(160, 20) + 1e-9) sampledFaults ??= `${got.toFixed(3)} past a reach of ${reach(160, 20).toFixed(3)}`;
+}
+check('nothing on the solid gets further out than its reach', sampledFaults === null, sampledFaults ?? '');
+
+// ---- the light and shade the faces are painted with -------------------------
+// A block's two colours describe it lit from the front. Turn it and the other
+// faces want the same colour under more or less light, which is what `tone` is;
+// a sign the wrong way round there lights the underside and shades the top.
+const lit = tone('#6FA8FF', 0.3);
+const dark = tone('#6FA8FF', -0.3);
+check('light and shade move a colour the way they are named',
+  relLum(lit) > relLum('#6FA8FF') && relLum(dark) < relLum('#6FA8FF'), `${dark} < #6FA8FF < ${lit}`);
+check('a colour under no more light is the colour it was', tone('#6FA8FF', 0) === '#6FA8FF', tone('#6FA8FF', 0));
+check('all the light there is is white, and none of it is black',
+  tone('#6FA8FF', 1) === '#FFFFFF' && tone('#6FA8FF', -1) === '#000000');
+check('however much light is asked for, the answer is still a colour',
+  [3, -3, 0.5].every((amount) => /^#[0-9A-F]{6}$/.test(tone('#B9E05F', amount))),
+  tone('#B9E05F', 3));
+
+// ---- the loop that only ever ran once ---------------------------------------
+// `Animated.loop` does not repeat a native-driven animation itself: it hands the
+// whole loop to the platform, and on react-native-web nothing is listening. The
+// first lap is perfect and there is never a second one, which is why this went
+// unnoticed in a background that laps every thirty-seven seconds.
+const loopers = ['../src/Backdrop.tsx', '../src/Turntable.tsx'];
+for (const file of loopers) {
+  const source = await readFile(new URL(file, import.meta.url), 'utf8');
+  const loops = /Animated\.loop\(/.test(source);
+  check(
+    `${file.split('/').pop()} does not ask for the native driver inside a loop`,
+    !loops || !/Animated\.loop\([\s\S]{0,600}?useNativeDriver:\s*true/.test(source),
+    'a native-driven loop plays once on the web and then stands still',
+  );
+}
 
 console.log(failures === 0 ? '\nall checks passed' : `\n${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

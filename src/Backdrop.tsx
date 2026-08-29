@@ -1,13 +1,7 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  AccessibilityInfo,
-  Animated,
-  Easing,
-  StyleSheet,
-  View,
-  useWindowDimensions,
-} from 'react-native';
+import React, { useEffect, useMemo, useRef } from 'react';
+import { Animated, Easing, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { SHAPES, SHELL_ALPHA, shellScales, type Shape } from './backdropShapes';
+import { LOOPS_NATIVELY, useReduceMotion } from './motion';
 import type { Theme } from './theme';
 
 /**
@@ -71,7 +65,9 @@ function Drift({
         duration: shape.period * 1000,
         // linear, so the lap has no start or finish to notice
         easing: Easing.linear,
-        useNativeDriver: true,
+        // a native-driven loop is handed to the platform to repeat, and on the
+        // web nothing repeats it: one lap, and then a still background forever
+        useNativeDriver: LOOPS_NATIVELY,
       }),
     );
     loop.start();
@@ -132,23 +128,9 @@ function Drift({
 
 export default function Backdrop({ theme }: { theme: Theme }) {
   const { width, height } = useWindowDimensions();
-  const [still, setStill] = useState(false);
-
   // a background that never stops moving is exactly what "reduce motion" is for;
   // the shapes stay, they just stop wandering
-  useEffect(() => {
-    let live = true;
-    AccessibilityInfo.isReduceMotionEnabled?.()
-      .then((on) => {
-        if (live) setStill(!!on);
-      })
-      .catch(() => {});
-    const sub = AccessibilityInfo.addEventListener?.('reduceMotionChanged', (on) => setStill(!!on));
-    return () => {
-      live = false;
-      sub?.remove?.();
-    };
-  }, []);
+  const still = useReduceMotion();
 
   const screen = useMemo(() => ({ width, height }), [height, width]);
 

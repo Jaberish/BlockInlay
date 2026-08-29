@@ -90,6 +90,20 @@ export const alpha = (hex: string, a: number) => {
 };
 
 /**
+ * The same colour with more or less light on it: towards white above zero,
+ * towards black below. A piece's two colours describe a block lit from the front
+ * — turn that block and its other faces need the same colour under more or less
+ * of that light, which is one number away rather than another palette.
+ */
+export const tone = (hex: string, amount: number): string => {
+  const towards = amount > 0 ? 255 : 0;
+  const strength = Math.min(1, Math.abs(amount));
+  return `#${rgbOf(hex)
+    .map((channel) => byte(channel + (towards - channel) * strength))
+    .join('')}`;
+};
+
+/**
  * The darker face under a block's raised top. Twenty points of lightness down,
  * with a ceiling on saturation — a side face that stays as vivid as the top
  * competes with it, which is what the hand-picked pairs of the first palette

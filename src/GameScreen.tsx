@@ -27,6 +27,7 @@ import {
 import { emptyBoard, isSolved, snapToBoard, type Placements } from './placement';
 import { nextHint } from './solve';
 import HintButton from './HintButton';
+import Turntable from './Turntable';
 import { themeAt, type Theme } from './theme';
 import { useAudioPlayer } from 'expo-audio';
 
@@ -503,73 +504,81 @@ export default function GameScreen({
           collapsable={false}
           style={{ width: level.board.cols * cell, height: level.board.rows * cell }}
         >
-          {level.board.cells.map((c) => (
-            <View
-              key={cellKey(c.row, c.col)}
-              style={[
-                styles.socket,
-                {
-                  left: c.col * cell + gap,
-                  top: c.row * cell + gap,
-                  width: cell - gap * 2,
-                  height: cell - gap * 2,
-                  borderRadius: radius,
-                },
-              ]}
-            />
-          ))}
-
-          {preview && dragPiece
-            ? dragPiece.cells.map((c) => (
+          {solved ? (
+            // nothing is left to place, so the board stops being a board: the
+            // picture they made lifts off the screen and turns, and goes on turning
+            <Turntable level={level} placements={placements} shapes={shapes} cell={cell} />
+          ) : (
+            <>
+              {level.board.cells.map((c) => (
                 <View
-                  key={`preview:${c.row}:${c.col}`}
+                  key={cellKey(c.row, c.col)}
                   style={[
-                    styles.preview,
+                    styles.socket,
                     {
-                      left: (preview.col + c.col) * cell + gap,
-                      top: (preview.row + c.row) * cell + gap,
+                      left: c.col * cell + gap,
+                      top: c.row * cell + gap,
                       width: cell - gap * 2,
                       height: cell - gap * 2,
                       borderRadius: radius,
                     },
                   ]}
                 />
-              ))
-            : null}
+              ))}
 
-          {level.pieces.map((piece) => {
-            const at = placements[piece.id];
-            if (!at) return null;
-            return (
-              <View
-                key={piece.id}
-                style={{
-                  pointerEvents: 'box-none',
-                  position: 'absolute',
-                  left: at.col * cell,
-                  top: at.row * cell,
-                  width: piece.cols * cell,
-                  height: piece.rows * cell,
-                  // hidden, not unmounted: unmounting would kill the gesture mid-drag
-                  opacity: piece.id === dragId ? 0 : 1,
-                }}
-              >
-                <Blocks
-                  shape={shapes[piece.id]}
-                  cell={cell}
-                  handlers={responderFor(piece, 'board').panHandlers}
-                />
-                {flash?.pieceId === piece.id ? (
-                  <View style={[styles.hintFlash, { opacity: FLASH_STEPS[flash.step] }]}>
-                    <Blocks
-                      shape={{ cells: piece.cells, color: '#FFFFFF', shade: '#FFFFFF' }}
-                      cell={cell}
+              {preview && dragPiece
+                ? dragPiece.cells.map((c) => (
+                    <View
+                      key={`preview:${c.row}:${c.col}`}
+                      style={[
+                        styles.preview,
+                        {
+                          left: (preview.col + c.col) * cell + gap,
+                          top: (preview.row + c.row) * cell + gap,
+                          width: cell - gap * 2,
+                          height: cell - gap * 2,
+                          borderRadius: radius,
+                        },
+                      ]}
                     />
+                  ))
+                : null}
+
+              {level.pieces.map((piece) => {
+                const at = placements[piece.id];
+                if (!at) return null;
+                return (
+                  <View
+                    key={piece.id}
+                    style={{
+                      pointerEvents: 'box-none',
+                      position: 'absolute',
+                      left: at.col * cell,
+                      top: at.row * cell,
+                      width: piece.cols * cell,
+                      height: piece.rows * cell,
+                      // hidden, not unmounted: unmounting would kill the gesture mid-drag
+                      opacity: piece.id === dragId ? 0 : 1,
+                    }}
+                  >
+                    <Blocks
+                      shape={shapes[piece.id]}
+                      cell={cell}
+                      handlers={responderFor(piece, 'board').panHandlers}
+                    />
+                    {flash?.pieceId === piece.id ? (
+                      <View style={[styles.hintFlash, { opacity: FLASH_STEPS[flash.step] }]}>
+                        <Blocks
+                          shape={{ cells: piece.cells, color: '#FFFFFF', shade: '#FFFFFF' }}
+                          cell={cell}
+                        />
+                      </View>
+                    ) : null}
                   </View>
-                ) : null}
-              </View>
-            );
-          })}
+                );
+              })}
+            </>
+          )}
         </View>
       </View>
 
