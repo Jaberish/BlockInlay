@@ -4,9 +4,9 @@
  * Every ten levels the whole app changes colour — background, panels, accent and
  * the nine piece colours all move together, so reaching level 11 looks like
  * arriving somewhere new rather than like the same board in a different hue.
- * After level 100 a chapter lasts twenty levels instead of ten: by then the
- * novelty of a fresh palette is worth more spread thinner, and it halves how
- * many palettes have to exist.
+ * Ten levels the whole way: with twenty palettes that means the set comes round
+ * again every two hundred levels, which is far enough apart to read as a return
+ * rather than as a repeat.
  *
  * A theme is written as a *seed*, not as thirty hex codes. Nearly everything a
  * screen needs — the panel, the text, the dim text, the menu thumbnails — is one
@@ -227,21 +227,16 @@ export const THEMES: Theme[] = SEEDS.map(build);
 
 // ---- which theme a level wears ----
 
-/** levels per chapter for the first hundred, and for everything after */
+/** levels per chapter, the whole way through */
 export const CHAPTER = 10;
-export const LONG_CHAPTER = 20;
-/** the level number where chapters get longer */
-export const CHAPTER_SWITCH = 100;
 
 /** which chapter a level belongs to, counted from zero and never wrapped */
-export const chapterAt = (levelIndex: number): number => {
-  const i = Math.max(0, levelIndex);
-  return i < CHAPTER_SWITCH
-    ? Math.floor(i / CHAPTER)
-    : CHAPTER_SWITCH / CHAPTER + Math.floor((i - CHAPTER_SWITCH) / LONG_CHAPTER);
-};
+export const chapterAt = (levelIndex: number): number => Math.floor(Math.max(0, levelIndex) / CHAPTER);
 
-/** chapters outrun the palettes long before level 5000, so the set recycles */
+/**
+ * Chapters outrun the palettes long before level 5000, so the set recycles —
+ * with ten levels to a chapter and twenty palettes, every two hundred levels.
+ */
 export const themeIndexAt = (levelIndex: number): number => chapterAt(levelIndex) % THEMES.length;
 
 export const themeAt = (levelIndex: number): Theme => THEMES[themeIndexAt(levelIndex)];

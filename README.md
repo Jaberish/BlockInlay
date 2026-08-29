@@ -165,14 +165,21 @@ piece counts, tray layout, menu thumbnails and level order are all derived.
 
 Levels are grouped into chapters that share a palette — background, panels,
 accent and the nine piece colours all move together, so crossing into a new one
-looks like arriving somewhere rather than like the same board recoloured. A
-chapter is ten levels for the first hundred and twenty after that: by then a
-fresh palette is worth more spread thinner. The level list is painted in the
+looks like arriving somewhere rather than like the same board recoloured. A chapter is
+ten levels, the whole way through. The level list is painted in the
 colours of the board you are on — the last one you opened, or before that the one
 after the furthest you have finished — so the chapter is visible before you open
 it, and leaving a board puts you back beside it rather than at your high-water
 mark. There are twenty
-palettes and the set recycles, which it first does at level 301.
+palettes and the set recycles, which it first does at level 201.
+
+Each tile in the list draws its board in its *own* chapter's colours rather than
+the list's, so scrolling shows the colour change every ten levels and a tile is a
+fair preview of what opening it looks like. A row therefore never spans two
+chapters: ten levels do not divide by the three columns a wide screen uses, so
+the tenth board would otherwise sit beside the eleventh and twelfth wearing the
+next chapter's colour, which reads as the theme being broken rather than as a
+boundary. The price is a short last row per chapter on wide screens.
 
 A palette is written as a seed of six numbers rather than thirty hex codes:
 

@@ -12,6 +12,7 @@
  */
 
 import { LEVEL_COUNT, sectionAt } from './levels';
+import { chapterAt } from './theme';
 
 export const GRID_GAP = 12;
 export const TILE_HEIGHT = 178;
@@ -69,6 +70,12 @@ export const buildMenu = (columns: number): MenuLayout => {
         count: SECTION_SIZES.get(section) ?? 0,
       });
     }
+    // A row never spans two chapters. Each tile draws its board in its own
+    // chapter's colours, and ten levels do not divide by three: on a wide screen
+    // the tenth board would sit in a row beside the eleventh and twelfth wearing
+    // the next chapter's colour, which reads as the theme being broken rather
+    // than as a boundary. The cost is a short last row per chapter.
+    if (index > 0 && chapterAt(index) !== chapterAt(index - 1)) flushRow();
     bucket.push(index);
     if (bucket.length === columns) flushRow();
   }

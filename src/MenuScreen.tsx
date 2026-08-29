@@ -23,7 +23,7 @@ import {
   TILE_HEIGHT,
   type Item,
 } from './menuLayout';
-import type { Theme } from './theme';
+import { themeAt, type Theme } from './theme';
 
 const PADDING = 18;
 /** the fixed box each board silhouette is scaled to fit */
@@ -45,18 +45,23 @@ type Props = {
   theme: Theme;
 };
 
-/** the board shape, scaled to fit the tile's thumbnail box */
+/**
+ * The board shape, scaled to fit the tile's thumbnail box.
+ *
+ * Drawn in its *own* chapter's colours rather than the list's, so scrolling
+ * shows the colour changing every ten levels and a tile is a fair preview of
+ * what opening it looks like.
+ */
 function BoardThumb({
   level,
   width,
   solved,
-  theme,
 }: {
   level: Level;
   width: number;
   solved: boolean;
-  theme: Theme;
 }) {
+  const theme = themeAt(level.index);
   const cell = Math.max(
     3,
     Math.floor(Math.min(width / level.board.cols, THUMB_HEIGHT / level.board.rows)),
@@ -216,7 +221,7 @@ export default function MenuScreen({
                   <Text style={styles.number}>{index + 1}</Text>
                   {isSolved ? <Text style={styles.tick}>✓</Text> : null}
                 </View>
-                <BoardThumb level={level} width={tileWidth - 24} solved={isSolved} theme={theme} />
+                <BoardThumb level={level} width={tileWidth - 24} solved={isSolved} />
                 <Text style={styles.name} numberOfLines={1}>
                   {level.name ?? level.difficulty}
                 </Text>
@@ -230,7 +235,7 @@ export default function MenuScreen({
         </View>
       );
     },
-    [onPick, solved, styles, theme, tileWidth],
+    [onPick, solved, styles, tileWidth],
   );
 
   return (

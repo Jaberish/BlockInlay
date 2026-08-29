@@ -8,7 +8,7 @@ import { settle, spend, refillProgress, FULL_BANK, MAX_HINTS, REFILL_MS } from '
 import { nextHint, solveLevel } from '../src/solve.ts';
 import { boardCell, trayLayout, CHROME, ROOT_PADDING } from '../src/gameLayout.ts';
 import { emptyBoard, fitsAt, isSolved, occupiedExcept, snapToBoard } from '../src/placement.ts';
-import { THEMES, chapterAt, themeAt, themeIndexAt, CHAPTER, CHAPTER_SWITCH, LONG_CHAPTER, PIECE_COLOURS } from '../src/theme.ts';
+import { THEMES, chapterAt, themeAt, themeIndexAt, CHAPTER, PIECE_COLOURS } from '../src/theme.ts';
 import { SHAPES, SHELLS, SHELL_ALPHA, coreAlpha, shellScales, wander } from '../src/backdropShapes.ts';
 import { readFile } from 'node:fs/promises';
 
@@ -391,29 +391,28 @@ check(
 check('level 11 has moved on', themeAt(10) !== THEMES[0], themeAt(10).name);
 
 // where every boundary falls, worked out from the rule rather than from the code
-const wantedChapter = (i) =>
-  i < CHAPTER_SWITCH
-    ? Math.floor(i / CHAPTER)
-    : CHAPTER_SWITCH / CHAPTER + Math.floor((i - CHAPTER_SWITCH) / LONG_CHAPTER);
-
 let wrongChapter = null;
 let shortRun = null;
 let runStart = 0;
 for (let i = 0; i < LEVEL_COUNT; i++) {
-  if (chapterAt(i) !== wantedChapter(i)) wrongChapter ??= `level ${i + 1}`;
+  if (chapterAt(i) !== Math.floor(i / CHAPTER)) wrongChapter ??= `level ${i + 1}`;
   const boundary = i + 1 === LEVEL_COUNT || chapterAt(i + 1) !== chapterAt(i);
   if (boundary) {
     const run = i - runStart + 1;
-    const want = runStart < CHAPTER_SWITCH ? CHAPTER : LONG_CHAPTER;
     // the last chapter is only as long as the levels that are left
-    if (run !== want && i + 1 !== LEVEL_COUNT) {
-      shortRun ??= `levels ${runStart + 1}-${i + 1} run for ${run}, not ${want}`;
+    if (run !== CHAPTER && i + 1 !== LEVEL_COUNT) {
+      shortRun ??= `levels ${runStart + 1}-${i + 1} run for ${run}, not ${CHAPTER}`;
     }
     runStart = i + 1;
   }
 }
 check('every level sits in the chapter the rule puts it in', wrongChapter === null, wrongChapter ?? '');
-check('chapters run for ten levels, then twenty after level 100', shortRun === null, shortRun ?? '');
+check('chapters run for ten levels, all the way to the end', shortRun === null, shortRun ?? '');
+check(
+  'the palettes come round again every two hundred levels',
+  themeAt(0) === themeAt(THEMES.length * CHAPTER) && themeAt(0) !== themeAt(THEMES.length * CHAPTER - 1),
+  `level ${THEMES.length * CHAPTER + 1} is ${themeAt(THEMES.length * CHAPTER).name} again`,
+);
 
 check('the first hundred levels are ten different themes',
   new Set(Array.from({ length: 100 }, (_, i) => themeIndexAt(i))).size === 10);
@@ -534,6 +533,21 @@ for (const [i, shape] of SHAPES.entries()) {
   }
 }
 check('every drifting shape loops cleanly and stays in view', shapeFaults.length === 0, shapeFaults.slice(0, 3).join('; '));
+
+// every tile draws its board in its own chapter's colours, so a row holding two
+// chapters shows two colours side by side and reads as a fault rather than a
+// boundary — ten levels do not divide by the three columns a wide screen uses
+for (const columns of [2, 3]) {
+  const { items } = buildMenu(columns);
+  const mixed = items.find(
+    (item) => item.kind === 'row' && chapterAt(item.levels[0]) !== chapterAt(item.levels[item.levels.length - 1]),
+  );
+  check(
+    `at ${columns} columns no row holds two chapters`,
+    mixed === undefined,
+    mixed ? `levels ${mixed.levels.map((i) => i + 1).join(', ')}` : '',
+  );
+}
 
 // ---- the trap that emptied the top of the level list -----------------------
 // `VirtualizedList` refuses to recompute its window while `initialScrollIndex`
