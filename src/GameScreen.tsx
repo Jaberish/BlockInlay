@@ -17,7 +17,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Arrow from './Arrow';
 import Blocks, { type Shape } from './Blocks';
-import { cellKey, type Cell, type Level, type Piece } from './levels';
+import { LEVEL_COUNT, cellKey, type Cell, type Level, type Piece } from './levels';
 import {
   boardCell,
   trayLayout,
@@ -29,7 +29,9 @@ import {
 import { emptyBoard, isSolved, snapToBoard, type Placements } from './placement';
 import { nextHint } from './solve';
 import HintButton from './HintButton';
+import Fanfare from './Fanfare';
 import Turntable from './Turntable';
+import { useReduceMotion } from './motion';
 import { themeAt, type Theme } from './theme';
 import { useAudioPlayer } from 'expo-audio';
 
@@ -79,6 +81,22 @@ const LESSON = {
   drag: { line: 'Drag a piece onto the board', sub: 'the goal is to complete the shape' },
   tap: { line: 'Tap a piece to send it back', sub: 'or drag it somewhere else' },
   rule: { line: 'Fill every square', sub: 'pieces never turn, and there is exactly one fit' },
+} as const;
+
+/**
+ * What the five thousandth board says when it is finished.
+ *
+ * Every other board says "Perfect fit" and offers the next one. This one has no
+ * next one, and saying the same two words at the end of the whole game would be
+ * the game failing to notice. So it is told plainly and only once — there is no
+ * second time it can be shown, and nothing is gained by being coy about it.
+ */
+const FINALE = {
+  eyebrow: 'THE LAST BOARD',
+  line: 'You beat Block Inlay',
+  // the count is read rather than written out: "five thousand boards" would
+  // quietly become a lie the first time the generator is run with another number
+  sub: `${LEVEL_COUNT.toLocaleString()} boards, one fit each — and that was the last of them.`,
 } as const;
 
 type Props = {
@@ -154,6 +172,10 @@ export default function GameScreen({
    * `replaying`, for the same reason: it must not change under the player.
    */
   const [teaching] = useState(() => level.index === 0 && !alreadySolved);
+
+  /** the five thousandth board: the one there is nothing after */
+  const finale = level.index === LEVEL_COUNT - 1;
+  const still = useReduceMotion();
 
   const tray = useMemo(() => trayLayout(level, width, height), [height, level, width]);
 
@@ -539,7 +561,9 @@ export default function GameScreen({
           <Text style={styles.title} numberOfLines={1}>
             {level.name ? `${level.index + 1}. ${level.name}` : `Level ${level.index + 1}`}
           </Text>
-          <Text style={styles.subtitle}>{solved ? 'Solved — a perfect fit.' : level.difficulty}</Text>
+          <Text style={styles.subtitle}>
+            {!solved ? level.difficulty : finale ? 'Solved — the last one.' : 'Solved — a perfect fit.'}
+          </Text>
         </View>
         {replaying ? (
           <View style={styles.solvedTag}>
@@ -694,25 +718,39 @@ export default function GameScreen({
               },
             ]}
           >
+            {finale ? <Text style={styles.eyebrow}>{FINALE.eyebrow}</Text> : null}
             <View style={styles.titleWrap}>
-              <Animated.View
-                style={[
-                  styles.burst,
-                  {
-                    opacity: burst.interpolate({
-                      inputRange: [0, 0.15, 1],
-                      outputRange: [0, 0.55, 0],
-                    }),
-                    transform: [
-                      { scale: burst.interpolate({ inputRange: [0, 1], outputRange: [0.55, 1.9] }) },
-                    ],
-                  },
-                ]}
-                pointerEvents="none"
-              />
+              {/* one ring on an ordinary board; on the last one they go out in
+                  threes, each a beat behind the one before it */}
+              {(finale ? [0, 0.14, 0.28] : [0]).map((after, ring) => (
+                <Animated.View
+                  key={after}
+                  style={[
+                    styles.burst,
+                    {
+                      opacity: burst.interpolate({
+                        inputRange: [after, after + 0.15, 1],
+                        outputRange: [0, 0.55, 0],
+                        extrapolate: 'clamp',
+                      }),
+                      transform: [
+                        {
+                          scale: burst.interpolate({
+                            inputRange: [after, 1],
+                            outputRange: [0.55, 1.9 + ring * 0.6],
+                            extrapolate: 'clamp',
+                          }),
+                        },
+                      ],
+                    },
+                  ]}
+                  pointerEvents="none"
+                />
+              ))}
               <Animated.Text
                 style={[
                   styles.bannerTitle,
+                  finale && styles.finaleTitle,
                   {
                     // up to full brightness in the first third of the swing, so
                     // the overshoot happens in view rather than behind a fade
@@ -740,9 +778,10 @@ export default function GameScreen({
                   },
                 ]}
               >
-                Perfect fit
+                {finale ? FINALE.line : 'Perfect fit'}
               </Animated.Text>
             </View>
+            {finale ? <Text style={styles.finaleSub}>{FINALE.sub}</Text> : null}
             <Pressable
               onPress={onNext ?? onBack}
               accessibilityRole="button"
@@ -777,6 +816,8 @@ export default function GameScreen({
           </View>
         )}
       </View>
+
+      {solved && finale ? <Fanfare theme={theme} still={still} /> : null}
 
       {dragPiece ? (
         <Animated.View
@@ -1016,6 +1057,26 @@ const makeStyles = (theme: Theme) =>
       fontSize: 26,
       fontWeight: '800',
       letterSpacing: 0.3,
+    },
+    eyebrow: {
+      color: theme.textDim,
+      fontSize: 11,
+      fontWeight: '800',
+      letterSpacing: 2.2,
+      marginBottom: 8,
+    },
+    finaleTitle: {
+      fontSize: 30,
+      letterSpacing: 0.1,
+      textAlign: 'center',
+    },
+    finaleSub: {
+      color: theme.text,
+      fontSize: 13,
+      lineHeight: 19,
+      textAlign: 'center',
+      marginTop: 10,
+      paddingHorizontal: 8,
     },
     primaryButton: {
       alignSelf: 'stretch',

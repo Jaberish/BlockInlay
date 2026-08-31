@@ -12,6 +12,7 @@ import { emptyBoard, fitsAt, isSolved, occupiedExcept, snapToBoard } from '../sr
 import { THEMES, chapterAt, themeAt, themeIndexAt, CHAPTER, PIECE_COLOURS, tone } from '../src/theme.ts';
 import { DEPTH, TURN_STEPS, edgesOf, litBy, reach, rimRuns, rowRuns, shineBy, spinOverTurn, stretches, turnedX, wallColumns, wallEdge, wallFront } from '../src/solid.ts';
 import { SHAPES, SHELLS, SHELL_ALPHA, coreAlpha, shellScales, wander } from '../src/backdropShapes.ts';
+import { FLECKS, FRAMES, ORIGIN, THROW_MS, fadeOf, flightOf, heightAt, thrown } from '../src/confetti.ts';
 import { readFile } from 'node:fs/promises';
 import { inflateSync } from 'node:zlib';
 
@@ -25,9 +26,22 @@ const check = (name, ok, detail = '') => {
 };
 const at = (spot) => (spot ? `(${spot.row},${spot.col})` : 'null');
 
+/**
+ * A named piece of a named level. Pieces are dealt to the tray in an order drawn
+ * from the level's id (see `dealOrder`), so the tray position of a particular
+ * shape is not something a test gets to know — the shape itself is.
+ */
+const pieceLike = (level, pattern) => {
+  const want = parseShape(pattern);
+  return level.pieces.find((p) => shapeOf(p.cells) === want);
+};
+const shapeOf = (cells) => cells.map((c) => cellKey(c.row, c.col)).sort().join('|');
+const parseShape = (pattern) =>
+  shapeOf(pattern.flatMap((line, row) => [...line].flatMap((ch, col) => (ch === '#' ? [{ row, col }] : []))));
+
 // ---- the brief: the heart's tip piece drops into the bottom point of the heart ----
 const heart = levelById('heart');
-const tip = heart.pieces[4];
+const tip = pieceLike(heart, ['###', '.#.']);
 check('the heart tip piece is the shape from the brief', tip.rows === 2 && tip.cols === 3 && tip.cells.length === 4);
 
 let hit = snapToBoard(heart, tip, 3, 2, emptyBoard(heart));
@@ -43,8 +57,8 @@ check('a drop off the board is refused', hit === null, at(hit));
 
 // ---- pieces never land on top of each other ----
 const busy = emptyBoard(heart);
-busy[heart.pieces[3].id] = { row: 2, col: 1 }; // the long piece across the middle
-const jay = heart.pieces[1];
+busy[pieceLike(heart, ['####']).id] = { row: 2, col: 1 }; // the long piece across the middle
+const jay = pieceLike(heart, ['..#', '###']);
 hit = snapToBoard(heart, jay, 2, 1, busy);
 const overlapped =
   hit != null &&
@@ -57,10 +71,12 @@ let illegal = 0;
 let unplaceable = [];
 for (const level of EVERY) {
   const board = emptyBoard(level);
-  // one piece already down, so occupancy is exercised too
-  board[level.pieces[0].id] = { row: 0, col: 0 };
-  const seated = fitsAt(level, level.pieces[0], 0, 0, new Set());
-  if (!seated) board[level.pieces[0].id] = null;
+  // One piece already down, so occupancy is exercised too — and down where it
+  // belongs. A piece dropped anywhere else can legitimately wall another one out
+  // of the board altogether, which is the game working rather than a snap bug, so
+  // the board these rules are checked against is one a player could really reach.
+  const first = level.pieces[0];
+  board[first.id] = solveLevel(level)[first.id];
 
   for (const piece of level.pieces) {
     let anywhere = false;
@@ -81,24 +97,39 @@ check('every piece can be dropped somewhere', unplaceable.length === 0, unplacea
 
 // ---- each level's own solution is reachable and recognised ----
 for (const level of EVERY) {
-  // rebuild the solution by placing pieces greedily into the one legal tiling
+  // Rebuild the solution out of the placement helpers alone. Which piece goes
+  // where is the search; which square to fill next is not — always taking the
+  // first empty one keeps every arrangement reachable while costing a couple of
+  // hundred steps instead of millions, and keeps the cost of this test out of
+  // the hands of whatever order the tray happened to be dealt in.
   const board = emptyBoard(level);
+  const left = new Set(level.pieces.map((p) => p.id));
+  const filled = new Set();
   let placed = 0;
-  const solve = (i) => {
-    if (i === level.pieces.length) return true;
-    const piece = level.pieces[i];
-    const taken = occupiedExcept(level, board, piece.id);
-    for (let row = 0; row <= level.board.rows - piece.rows; row++) {
-      for (let col = 0; col <= level.board.cols - piece.cols; col++) {
+  const solve = () => {
+    if (left.size === 0) return true;
+    const target = level.board.cells.find((c) => !filled.has(cellKey(c.row, c.col)));
+    for (const piece of level.pieces) {
+      if (!left.has(piece.id)) continue;
+      const taken = occupiedExcept(level, board, piece.id);
+      // the piece has to cover the target square, so try it by each of its own
+      for (const anchor of piece.cells) {
+        const row = target.row - anchor.row;
+        const col = target.col - anchor.col;
         if (!fitsAt(level, piece, row, col, taken)) continue;
+        const keys = piece.cells.map((c) => cellKey(row + c.row, col + c.col));
         board[piece.id] = { row, col };
-        if (solve(i + 1)) return true;
+        left.delete(piece.id);
+        for (const k of keys) filled.add(k);
+        if (solve()) return true;
+        for (const k of keys) filled.delete(k);
+        left.add(piece.id);
         board[piece.id] = null;
       }
     }
     return false;
   };
-  const ok = solve(0);
+  const ok = solve();
   placed = level.pieces.filter((p) => board[p.id]).length;
   const cells = new Set();
   for (const piece of level.pieces) {
@@ -113,6 +144,81 @@ for (const level of EVERY) {
 }
 
 check('a fresh board is not solved', EVERY.every((l) => !isSolved(l, emptyBoard(l))));
+
+// ---- the deal: the tray is not the answer, read left to right ---------------
+// Pieces are stored in the order they were cut off the board, and both packs cut
+// by repeatedly taking the first empty square in reading order. Dealt as written,
+// the tray was the solution spelled out: 99% of levels could be finished by
+// taking the next piece along and dropping it in the next hole along. So the tray
+// is dealt in an order drawn from the level's id, and these are the checks that
+// nothing about that order is worth learning.
+
+let readingOrder = 0;
+let ledByTopLeft = 0;
+let byChance = 0;
+const misdealt = [];
+const undealt = [];
+for (const level of EVERY) {
+  const answer = solveLevel(level);
+  // where each piece's own top-left square sits once the level is solved
+  const corner = level.pieces.map((piece) => {
+    const spot = answer[piece.id];
+    const cells = piece.cells
+      .map((c) => [spot.row + c.row, spot.col + c.col])
+      .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    return cells[0];
+  });
+  const rank = level.pieces
+    .map((_, i) => i)
+    .sort((a, b) => corner[a][0] - corner[b][0] || corner[a][1] - corner[b][1]);
+  if (rank.every((from, to) => from === to)) readingOrder++;
+  if (rank[0] === 0) ledByTopLeft++;
+  byChance += 1 / level.pieces.length;
+
+  // the deal is a permutation of the level's own pieces, and the tray still runs
+  // through the palette in order — the colours must not be shuffled along with it
+  const sources = level.pieces
+    .map((p) => Number(p.id.slice(p.id.lastIndexOf(':') + 1)))
+    .sort((a, b) => a - b);
+  if (!sources.every((source, i) => source === i) || !level.pieces.every((p, i) => p.slot === i)) {
+    misdealt.push(level.name ?? level.id);
+  }
+
+  // and it is a deal the player can see. Told by shape: two pieces of the same
+  // shape can change places all they like without the tray looking any different,
+  // so a level whose every slot holds the shape it was written with was not dealt
+  const written = level.pieces
+    .map((p) => [Number(p.id.slice(p.id.lastIndexOf(':') + 1)), shapeOf(p.cells)])
+    .sort((a, b) => a[0] - b[0])
+    .map(([, shape]) => shape);
+  const distinct = new Set(written).size > 1;
+  if (distinct && level.pieces.every((p, i) => shapeOf(p.cells) === written[i])) {
+    undealt.push(level.name ?? level.id);
+  }
+}
+
+check(
+  'every piece is dealt exactly once, and the tray wears the palette in order',
+  misdealt.length === 0,
+  misdealt.slice(0, 3).join(', '),
+);
+check(
+  'no level is dealt in an order the player could not tell from the written one',
+  undealt.length === 0,
+  undealt.slice(0, 3).join(', '),
+);
+check(
+  'the tray is never the solution read left to right',
+  readingOrder === 0,
+  `${readingOrder} of ${EVERY.length} levels`,
+);
+// the remaining bias is levels with two pieces of the same shape, where the
+// solver names the earlier one first — pieces the player cannot tell apart anyway
+check(
+  'the piece the tray leads with is no likelier than chance to be the top-left one',
+  ledByTopLeft < EVERY.length * 0.25,
+  `${((100 * ledByTopLeft) / EVERY.length).toFixed(1)}% against ${((100 * byChance) / EVERY.length).toFixed(1)}% by chance`,
+);
 
 // ---- the level list -------------------------------------------------------
 // The menu places thousands of tiles by arithmetic rather than by measuring
@@ -630,6 +736,132 @@ for (const columns of [2, 3]) {
     mixed ? `levels ${mixed.levels.map((i) => i + 1).join(', ')}` : '',
   );
 }
+
+// ---- the confetti over the last board ---------------------------------------
+// It fires once, on level 5000, and never again — so nobody is going to notice
+// it looking wrong by playing. Everything about the throw that can be a number
+// is one, and this is where it gets looked at.
+
+const confetti = thrown();
+
+check('every fleck is thrown', confetti.length === FLECKS, `${confetti.length} flecks`);
+
+check(
+  'all nine piece colours are worn, and in equal numbers',
+  (() => {
+    const worn = new Map();
+    for (const f of confetti) worn.set(f.tint, (worn.get(f.tint) ?? 0) + 1);
+    const counts = [...worn.values()];
+    return worn.size === 9 && Math.max(...counts) - Math.min(...counts) <= 1;
+  })(),
+);
+
+check(
+  'no fleck is still in the air when the throw ends',
+  confetti.every((f) => f.delay + f.life <= 1 + 1e-9),
+  `latest ${Math.max(...confetti.map((f) => f.delay + f.life)).toFixed(3)}`,
+);
+
+// Animated reads these straight into an interpolation, which throws on an input
+// range that does not climb
+check(
+  'every flight and every fade is given in increasing order',
+  confetti.every((f) => {
+    const rising = (xs) => xs.every((x, i) => i === 0 || x > xs[i - 1]);
+    return rising(flightOf(f).at) && rising(fadeOf(f).at);
+  }),
+);
+
+check(
+  'a fleck goes up, comes down, and is off the bottom of the screen before it stops',
+  confetti.every((f) => {
+    const { up } = flightOf(f);
+    // sampled, so the true peak sits a little above the lowest sample
+    return up[0] === 0 && Math.min(...up) < -0.05 && ORIGIN.y + up[up.length - 1] > 1;
+  }),
+  `lowest finish ${(ORIGIN.y + Math.min(...confetti.map((f) => flightOf(f).up[FRAMES - 1]))).toFixed(
+    2,
+  )} down the screen`,
+);
+
+check(
+  'and it peaks where it was asked to',
+  confetti.every((f) => Math.abs(heightAt(f, f.apex) + f.peak) < 1e-9),
+);
+
+check(
+  'the burst is thrown both ways, and lands across the whole screen',
+  (() => {
+    const ends = confetti.map((f) => ORIGIN.x + f.from + f.drift);
+    return Math.min(...ends) < 0 && Math.max(...ends) > 1;
+  })(),
+  `${Math.min(...confetti.map((f) => ORIGIN.x + f.from + f.drift)).toFixed(2)} to ${Math.max(
+    ...confetti.map((f) => ORIGIN.x + f.from + f.drift),
+  ).toFixed(2)} of the width`,
+);
+
+// The properties are meant to be independent: get the spread wrong and the burst
+// combs, with every fleck that flew furthest right having risen highest too.
+// Correlation is the check.
+//
+// `life` sits out. It is the one property derived rather than drawn — a fleck
+// launched late has less of the throw left to fly through, so it is capped by
+// `delay` on purpose, and the two of them move together at 0.5 by construction.
+// The check below is on the drawn ones.
+const correlated = (() => {
+  const fields = ['from', 'drift', 'peak', 'apex', 'delay', 'size', 'spin'];
+  const worst = { pair: '', r: 0 };
+  for (let a = 0; a < fields.length; a++) {
+    for (let b = a + 1; b < fields.length; b++) {
+      const xs = confetti.map((f) => f[fields[a]]);
+      const ys = confetti.map((f) => f[fields[b]]);
+      const mean = (v) => v.reduce((p, q) => p + q, 0) / v.length;
+      const mx = mean(xs);
+      const my = mean(ys);
+      let top = 0;
+      let sx = 0;
+      let sy = 0;
+      for (let i = 0; i < xs.length; i++) {
+        top += (xs[i] - mx) * (ys[i] - my);
+        sx += (xs[i] - mx) ** 2;
+        sy += (ys[i] - my) ** 2;
+      }
+      const r = Math.abs(top / Math.sqrt(sx * sy));
+      if (r > worst.r) worst.r = r, worst.pair = `${fields[a]}/${fields[b]}`;
+    }
+  }
+  return worst;
+})();
+check(
+  'no two of the properties a fleck is drawn with move together',
+  correlated.r < 0.35,
+  `worst is ${correlated.pair} at ${correlated.r.toFixed(2)}`,
+);
+
+// and each one is spread across its whole range rather than bunched in it: with
+// forty-six flecks a gap on one side of the burst is a gap you can see
+check(
+  'and each of them covers its own range evenly',
+  (() => {
+    const worst = ['from', 'drift', 'peak', 'apex', 'size', 'spin'].map((field) => {
+      const v = confetti.map((f) => f[field]).sort((a, b) => a - b);
+      const span = v[v.length - 1] - v[0];
+      return Math.max(...v.map((x, i) => (i === 0 ? 0 : x - v[i - 1]))) / span;
+    });
+    // evenly spread, the biggest gap between neighbours is about 1/46 of the span
+    return Math.max(...worst) < 0.1;
+  })(),
+);
+
+check(
+  'the throw is over in a couple of seconds and the flecks are pieces, not dust',
+  THROW_MS >= 1500 && THROW_MS <= 4000 && confetti.every((f) => f.size >= 6 && f.size <= 20),
+  `${THROW_MS}ms, ${Math.min(...confetti.map((f) => f.size)).toFixed(1)}–${Math.max(
+    ...confetti.map((f) => f.size),
+  ).toFixed(1)}px`,
+);
+
+check('the arc is sampled finely enough to read as a curve', FRAMES >= 5);
 
 // ---- the trap that emptied the top of the level list -----------------------
 // `VirtualizedList` refuses to recompute its window while `initialScrollIndex`

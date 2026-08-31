@@ -53,7 +53,23 @@ the board is playable straight through them. Then:
 - **Reset** (the ↻ button) starts the board over; the back arrow returns to the
   level list. **Continue** appears when the board is finished.
 
-Pieces cannot be rotated, so every piece has exactly one home.
+Pieces cannot be rotated, and there is only one way to fill a board — so the
+finished picture is settled before you start. Where a board uses two pieces of
+the same shape either one can take either home, but it is the same picture
+whichever way round they go.
+
+The tray, though, is dealt in a shuffled order. Pieces are stored in the order
+they were cut off the board, and both packs cut by repeatedly taking the first
+empty square in reading order — so dealt as written, the tray was the answer
+spelled out left to right, and the game was "take the next one". The shuffle is
+drawn from the level's id, so a board deals the same tray every time you open it,
+and no board is ever dealt in an order you could not tell from the written one.
+
+Every other order is equally likely, so on roughly one board in *n* the leading
+piece really is the one that fills the top-left square. That is the deal being
+random rather than a pattern to spot: forbidding it would tell you the top-left
+piece is one of the other eight, which is worth more to you than the coincidence
+it removes.
 
 Music loops while you play, and a chime marks a finished board — the music ducks
 under it for a moment so it can actually be heard. Both can be switched off in

@@ -16,6 +16,10 @@
  *   2. there is exactly ONE way to tile the board with them (pieces never
  *      rotate), so every level is a puzzle rather than a fitting exercise.
  *
+ * A level's pieces are stored in the order they were cut off the board, which is
+ * reading order — so they are dealt to the tray shuffled rather than as written.
+ * See `dealOrder`.
+ *
  * Levels are ordered by `nodes` — how many piece placements a solver has to try
  * before it has proved the board has a single solution. It is a rough stand-in
  * for how much thinking a level demands, and the difficulty labels are cut from
@@ -29,6 +33,7 @@
 
 import { GENERATED } from './generated';
 import { HANDMADE } from './handmade';
+import { seedFrom, shuffleInPlace, streamFrom } from './rng';
 
 export type Cell = { row: number; col: number };
 
@@ -69,10 +74,14 @@ export type Piece = {
   rows: number;
   cols: number;
   /**
-   * Which of the theme's colours this piece wears. The colour itself is not
-   * stored: it depends on the theme the level's chapter is in, and levels are
-   * built once and kept, so a piece that carried a hex code would still be
-   * wearing the palette that happened to be current the first time it was drawn.
+   * Which of the theme's colours this piece wears, which is its position in the
+   * tray — so the tray runs through the palette in order however the pieces were
+   * dealt, and the colour says nothing about where the piece goes.
+   *
+   * The colour itself is not stored: it depends on the theme the level's chapter
+   * is in, and levels are built once and kept, so a piece that carried a hex code
+   * would still be wearing the palette that happened to be current the first time
+   * it was drawn.
    */
   slot: number;
 };
@@ -183,6 +192,58 @@ const defAt = (index: number): LevelDef => {
   };
 };
 
+/**
+ * The order a level's pieces are offered in — deliberately not the order they
+ * are written in.
+ *
+ * Both packs cut their boards by repeatedly taking the first empty cell in
+ * reading order, so a piece's position in the data is the position of the square
+ * it fills. Written out as stored, the tray is the answer read left to right and
+ * the game collapses into "take the next one": across the corpus that held for
+ * 99% of levels, first piece and last alike. So the tray is dealt shuffled.
+ *
+ * The shuffle is drawn from the level's id and nothing else, because a level has
+ * to look the same every time it is opened. Seeded by the clock, a hint, a
+ * rotation or simply leaving and coming back would deal a different tray, and a
+ * player who had learnt where two pieces went would find them moved.
+ *
+ * The one deal it will not make is one the player could not tell from the written
+ * order, which is the whole answer at once rather than a hint about one piece.
+ * Told by shape rather than by position, because two pieces of the same shape
+ * change places without anything changing.
+ *
+ * Every other order is equally likely, the ones that happen to leave the first
+ * piece first included: "the tray never leads with the top-left piece" would be a
+ * rule of its own, and one that *helps* — told that, a player picking the opening
+ * piece of a three-piece board is choosing between two rather than three. Ruling
+ * out the one deal costs almost nothing by the same measure, and it is the deal
+ * that gives away all nine pieces instead of one.
+ */
+const dealOrder = (id: string, pieces: string[][]): number[] => {
+  const random = streamFrom(seedFrom(id));
+  const shape = pieces.map((piece) => piece.join('/'));
+  const moved = (order: number[]) => order.some((source, slot) => shape[source] !== shape[slot]);
+
+  // deal again if the deal was no deal at all. The generator has moved on by then,
+  // so the next one differs; the bound is only there because a loop that trusts a
+  // random number to end it is a loop that can fail to.
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const order = shuffleInPlace(
+      Array.from({ length: shape.length }, (_, i) => i),
+      random,
+    );
+    if (moved(order)) return order;
+  }
+
+  // Eight of those in a row is not going to happen, but if it does, one swap that
+  // does show beats handing over the answer. A board cut into pieces that are all
+  // the same shape has no deal to make: every order of it looks like every other.
+  const order = Array.from({ length: shape.length }, (_, i) => i);
+  const other = shape.findIndex((s) => s !== shape[0]);
+  if (other > 0) [order[0], order[other]] = [order[other], order[0]];
+  return order;
+};
+
 const build = (index: number): Level => {
   const def = defAt(index);
   return {
@@ -192,13 +253,15 @@ const build = (index: number): Level => {
     nodes: def.nodes,
     index,
     board: buildBoard(def.board),
-    pieces: def.pieces.map((pattern, i) => {
-      const cells = parse(pattern);
+    // dealt shuffled, but the id still names the piece's place in the data, so a
+    // level in the debugger reads against the file it was written in
+    pieces: dealOrder(def.id, def.pieces).map((source, slot) => {
+      const cells = parse(def.pieces[source]);
       return {
-        id: `${def.id}:${i}`,
+        id: `${def.id}:${source}`,
         cells,
         ...extent(cells),
-        slot: i,
+        slot,
       };
     }),
   };
