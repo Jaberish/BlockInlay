@@ -114,15 +114,20 @@ const STILL_AT = 0.055;
 const HAIR = 1;
 
 /**
- * How far in from the outline an edge rolls off, as a fraction of one square —
- * and, because it has to be the same number, how far the corners are rounded.
+ * How far in from the outline an edge rolls off, as a fraction of one square.
  *
- * The loose pieces are drawn as rounded squares, so the object they fuse into is
- * rounded off at its corners too, or finishing a level swaps something soft for
- * something with four sharp points. And the roll of the edge has to turn those
- * corners with the surface: an edge lit along a straight band and a corner cut
- * away underneath it leaves the light standing out past the shape it is on. Set
- * to the same reach, the two arcs are the same arc.
+ * The corners of the solid are square: where two edges of it meet, the material
+ * is cut rather than turned. So a roll runs the length of its edge and stops
+ * dead at the end of it, and nothing drawn along an edge has to agree with an
+ * arc — it is a straight band on a straight edge, at every angle.
+ *
+ * The loose pieces are rounded squares and the solid they fuse into is not, so
+ * the corners sharpen as the seams close. That is the trade, and it is worth
+ * taking. A rounded corner is not a corner but a curve of material running from
+ * the face into the side, and a stack of flat views can only ever approximate
+ * that curve — every approximation leaves a seam somewhere on it, at some angle.
+ * Square, the face and the side meet along one line at every angle of the turn,
+ * and that line is the one thing here that cannot come apart.
  */
 const ROLL = 0.2;
 /**
@@ -162,18 +167,18 @@ const FLANK_DARK = 0.36;
  */
 const RAMP = 0.13;
 /**
- * How spread out the sides have to be for the corners between them to mean
+ * How spread out the sides have to be for the steps between them to mean
  * anything, as a fraction of the flat board's width.
  *
  * Every column's side lands `cell × squash` from the next, so as the solid comes
  * edge-on they slide in behind one another and every step in the outline closes
- * up. A corner rounded off there is a corner of something that no longer has one
- * — and because only the outline's own sides are ever drawn, what shows through
- * the rounding is not the material behind it but the background.
+ * up. A step lit as an edge of its own once it has closed is a lit edge on
+ * something that no longer has one — and with a dozen of them stacked it is a
+ * ladder of bright rungs across the bar that edge-on ought to be.
  *
- * So the roundings are filled back in as the sides converge: gone by the time
- * the columns are further apart than a corner is round, complete by the time
- * they are nearer than that.
+ * So the light on a step fades as the sides converge: whole while the columns
+ * stand further apart than a roll is deep, gone by the time they are nearer
+ * than that.
  */
 const SPREAD = { flat: 0.2, whole: 0.35 };
 /**
@@ -190,15 +195,6 @@ const SHINE = 0.14;
 const WALL_SHINE = 0.18;
 /** how far the far side of a wall falls away from the near side of it */
 const WALL_BACK = 0.62;
-/**
- * And how dark it has got by the back edge itself, where the corners are.
- *
- * The fall-off is drawn as a shadow thrown across the wall's depth, which a flat
- * patch filling one of its corners knows nothing about — and the corners are at
- * the far edge, which is the darkest part of it. Left at the base colour the
- * patches come out as bright chips at the back of every step.
- */
-const BACK_CORNER = -0.55;
 /** the light caught on the material's own cut edge, where a side meets a face */
 const WALL_LIP = 0.26;
 /**
@@ -236,8 +232,7 @@ type Facet = { row: number; col: number; color: string; shade: string; edges: Ed
 
 /**
  * One piece of the solid's surface: an unbroken run of one colour across one
- * row, grown into whatever it abuts and rounded off wherever it turns a corner
- * of the object.
+ * row, grown into whatever it abuts.
  */
 type Slab = {
   row: number;
@@ -247,12 +242,6 @@ type Slab = {
   shade: string;
   wider: number;
   taller: number;
-  round: {
-    borderTopLeftRadius: number;
-    borderBottomLeftRadius: number;
-    borderTopRightRadius: number;
-    borderBottomRightRadius: number;
-  };
 };
 
 const white = (a: number) => `rgba(255,255,255,${a})`;
@@ -303,13 +292,9 @@ function Turntable({ level, placements, shapes, cell }: Props) {
       if (group) group.push(f);
       else groups.set(key, [f]);
     }
-    const corner = (down: boolean, across: boolean) => (down && across ? roll : 0);
     return [...groups.values()].flatMap((group) =>
       rowRuns(group).map(({ row, col, span }) => {
-        // only the ends of a piece can be at a corner of the object: a square in
-        // the middle of one has a square either side of it by definition
         const first = at.get(cellKey(row, col))!;
-        const last = at.get(cellKey(row, col + span - 1))!;
         return {
           row,
           col,
@@ -320,16 +305,10 @@ function Turntable({ level, placements, shapes, cell }: Props) {
           // next piece along only where the two are actually side by side
           wider: filled.has(cellKey(row, col + span)) ? 1 : 0,
           taller: first.edges.bottom ? 0 : 1,
-          round: {
-            borderTopLeftRadius: corner(first.edges.top, first.edges.left),
-            borderBottomLeftRadius: corner(first.edges.bottom, first.edges.left),
-            borderTopRightRadius: corner(last.edges.top, last.edges.right),
-            borderBottomRightRadius: corner(last.edges.bottom, last.edges.right),
-          },
         };
       }),
     );
-  }, [facets, roll]);
+  }, [facets]);
 
   const spin = useRef(new Animated.Value(0)).current;
   const fuse = useRef(new Animated.Value(0)).current;
@@ -472,15 +451,6 @@ function Turntable({ level, placements, shapes, cell }: Props) {
             Math.max(0, Math.min(1, (SPREAD.whole - Math.abs(v)) / (SPREAD.whole - SPREAD.flat))),
         ),
       ),
-      /**
-       * How far the steps in the outline have closed up, 0 to 1 — and so how far
-       * the corners at those steps have to be filled back in.
-       */
-      collapse: over(
-        curve.squash.map((v) =>
-          Math.max(0, Math.min(1, (SPREAD.whole - Math.abs(v)) / (SPREAD.whole - SPREAD.flat))),
-        ),
-      ),
       /** how far a wall column slides, per pixel it stands from the axis */
       slide: (edge: number) => over(curve.wallSlide.map((v) => v * edge)),
       /** a face is only drawn while it is the one pointing at the player */
@@ -558,7 +528,7 @@ function Turntable({ level, placements, shapes, cell }: Props) {
     slabs.map((slab) => (
       <View
         key={cellKey(slab.row, slab.col)}
-        style={{ ...bed(slab), ...slab.round, overflow: 'hidden', backgroundColor: base(slab) }}
+        style={{ ...bed(slab), overflow: 'hidden', backgroundColor: base(slab) }}
       >
         {grain(-slab.col * cell, -slab.row * cell, { width, height })}
         {/* the light on the face, laid on inside the piece rather than over the
@@ -572,26 +542,17 @@ function Turntable({ level, placements, shapes, cell }: Props) {
   /**
    * One length of the outline, as the stack of bands its roll is drawn in.
    *
-   * The bands are nested rather than laid side by side, and that is the whole
-   * trick. The outermost one is exactly as deep as the corners are round, so its
-   * rounded corner is the *same* quarter circle as the surface's — and every
-   * band inside it, being its child, is cut to that same circle without having
-   * to know anything about it.
-   *
-   * Rounded off one by one instead, each would get the tightest circle that fits
-   * its own depth, which is a smaller circle sitting inside a bigger one and
-   * poking out of it at the diagonal. On the shaded sides that is a black nub on
-   * every corner of the object, at two or three pixels across — small, and the
-   * first thing anyone sees.
+   * The bands are nested rather than laid side by side, so each is cut to the
+   * one outside it and only the outermost has to be placed. They are straight:
+   * the object's corners are cut square, so a band runs the length of its edge
+   * and ends where the edge does.
    */
   const rim = (run: Rim, paint: (a: number) => string, strength: number) => {
     const along = run.span * cell;
-    const near = run.capStart ? roll - HAIR : 0;
-    const far = run.capEnd ? roll - HAIR : 0;
-    // the outermost band, lying along the run at the full reach of the roll
+    // the outermost band, lying along the run at the full reach of the roll,
     // held a hair inside the outline on the side it lies along and at whichever
-    // of its ends turns a corner, its arc pulled in by the same hair — so it is
-    // concentric with the surface's arc and everywhere just inside it
+    // of its ends turns a corner of the object — so no band ever draws the edge
+    // the surface is already drawing (see HAIR)
     const deep = roll - HAIR;
     const head = run.capStart ? HAIR : 0;
     const short = along - head - (run.capEnd ? HAIR : 0);
@@ -602,8 +563,6 @@ function Turntable({ level, placements, shapes, cell }: Props) {
             top: run.row * cell + HAIR,
             width: short,
             height: deep,
-            borderTopLeftRadius: near,
-            borderTopRightRadius: far,
           }
         : run.side === 'bottom'
           ? {
@@ -611,8 +570,6 @@ function Turntable({ level, placements, shapes, cell }: Props) {
               top: (run.row + 1) * cell - roll,
               width: short,
               height: deep,
-              borderBottomLeftRadius: near,
-              borderBottomRightRadius: far,
             }
           : run.side === 'left'
             ? {
@@ -620,16 +577,12 @@ function Turntable({ level, placements, shapes, cell }: Props) {
                 top: run.row * cell + head,
                 width: deep,
                 height: short,
-                borderTopLeftRadius: near,
-                borderBottomLeftRadius: far,
               }
             : {
                 left: (run.col + 1) * cell - roll,
                 top: run.row * cell + head,
                 width: deep,
                 height: short,
-                borderTopRightRadius: near,
-                borderBottomRightRadius: far,
               };
     /** an inner band, held against the same edge of the run as the outer one */
     const against = (deep: number) =>
@@ -788,7 +741,6 @@ function Turntable({ level, placements, shapes, cell }: Props) {
           side,
         ).map(({ col, cells }) => {
           const edge = wallEdge(col, side, cell, width);
-          const turn = Math.min(roll, Math.round(depth / 2));
           // an unbroken stack of wall is one length of material, so it is drawn
           // as one — its shading runs down the whole of it and stops at its real
           // ends, rather than at every square it happens to pass
@@ -802,65 +754,6 @@ function Turntable({ level, placements, shapes, cell }: Props) {
             top: start * cell,
             height: span * cell,
           });
-          /**
-           * A side of the object is rounded off where it runs out at the top or
-           * the bottom — but only along its back edge, and only where the *solid*
-           * runs out rather than where this column does.
-           *
-           * The back edge, because the other one is where the side meets the face
-           * and the two are one piece of material there: round that end as well
-           * and a bite comes out of the join, and every stretch of wall reads as
-           * a separate rounded tile with the background showing between it and
-           * the face it belongs to.
-           *
-           * Wherever the column's own material ends, because that is where the
-           * side face ends and the solid turns a corner — every one of them, so
-           * the outline is round the whole way and not round in some places and
-           * flat in others. What was flat about them at the steps is put back by
-           * `closing` below, and only for as long as the steps are shut.
-           */
-          const capped = (start: number, span: number) => {
-            const top = edges.get(start)?.top ? turn : 0;
-            const foot = edges.get(start + span - 1)?.bottom ? turn : 0;
-            const back = frontEdge === 'right' ? 'Left' : 'Right';
-            return {
-              [`borderTop${back}Radius`]: top,
-              [`borderBottom${back}Radius`]: foot,
-            } as { borderTopLeftRadius?: number; borderBottomLeftRadius?: number };
-          };
-
-          /**
-           * The corners of this column's sides, filled square again.
-           *
-           * Drawn behind the sides, so all that ever shows of one is the corner
-           * it is filling, and only while the steps are shut (see SPREAD). Flat
-           * colour with no light on it: by the time any of this is showing, the
-           * sides are square to the light and there is next to nothing on them to
-           * miss — and it is a corner's worth of material, ten pixels on a side.
-           */
-          const closing = (start: number, span: number) => {
-            const at = capped(start, span) as Record<string, number>;
-            const back = frontEdge === 'right' ? 'left' : 'right';
-            const corners: Array<[number, string]> = [];
-            const top = at[`borderTop${frontEdge === 'right' ? 'Left' : 'Right'}Radius`];
-            const foot = at[`borderBottom${frontEdge === 'right' ? 'Left' : 'Right'}Radius`];
-            const dark = (row: number) => tone(paint.get(row) ?? '#000000', BACK_CORNER);
-            if (top) corners.push([start * cell, dark(start)]);
-            if (foot) corners.push([(start + span) * cell - turn, dark(start + span - 1)]);
-            return corners.map(([top_, colour]) => (
-              <View
-                key={`${start}:${top_}`}
-                style={{
-                  position: 'absolute',
-                  top: top_,
-                  [back]: 0,
-                  width: turn,
-                  height: turn,
-                  backgroundColor: colour,
-                }}
-              />
-            ));
-          };
           return (
             <Animated.View
               key={col}
@@ -874,13 +767,8 @@ function Turntable({ level, placements, shapes, cell }: Props) {
                 transform: [{ translateX: move.slide(edge) }, { scaleX: move.open }],
               }}
             >
-              {/* the corners of the sides, filled square while the steps between
-                  them are shut — behind the sides, so only the corners show */}
-              <Animated.View style={[fill, { opacity: move.collapse }]}>
-                {runs.flatMap(({ start, span }) => closing(start, span))}
-              </Animated.View>
               {runs.map(({ start, span }) => (
-                <View key={start} style={{ ...band(start, span), ...capped(start, span), overflow: 'hidden' }}>
+                <View key={start} style={{ ...band(start, span), overflow: 'hidden' }}>
                   {Array.from({ length: span }, (_, i) => (
                     <View
                       key={i}
@@ -994,7 +882,6 @@ function Turntable({ level, placements, shapes, cell }: Props) {
             key={cellKey(slab.row, slab.col)}
             style={{
               ...bed(slab),
-              ...slab.round,
               boxShadow: `0px 0px ${Math.round(cell * FLARE_REACH)}px #FFFFFF`,
             }}
           />
@@ -1023,7 +910,6 @@ function Turntable({ level, placements, shapes, cell }: Props) {
             key={cellKey(slab.row, slab.col)}
             style={{
               ...bed(slab),
-              ...slab.round,
               backgroundColor: '#000000',
               // the blur bleeds into the neighbouring piece, which is the same
               // black, so only the outline of the whole solid is ever soft
