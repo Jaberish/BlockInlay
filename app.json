@@ -17,7 +17,7 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.hutstacks.blockinlay"
+      "package": "com.hutstacks.blockinlaygame"
     },
     "web": {
       "favicon": "./assets/favicon.png"
